@@ -1,6 +1,8 @@
 import { Body, Controller, Get, HttpCode, Param, Post, Query } from '@nestjs/common';
 import { ApiCreatedResponse, ApiOkResponse, ApiTags } from '@nestjs/swagger';
 import {
+  AllocatableEmployeesQuerySchema,
+  AllocatableEmployeesResponseSchema,
   CancelLeaveRequestSchema,
   CancelLeaveResponseSchema,
   CreateCreditLeaveRequestSchema,
@@ -54,6 +56,8 @@ class CreditLeaveRowDto extends createZodDto(CreditLeaveRowSchema) {}
 class CreditLeaveQueryDto extends createZodDto(CreditLeaveQuerySchema) {}
 class CreditLeaveListResponseDto extends createZodDto(CreditLeaveListResponseSchema) {}
 class OnLeaveTodayResponseDto extends createZodDto(OnLeaveTodayResponseSchema) {}
+class AllocatableEmployeesQueryDto extends createZodDto(AllocatableEmployeesQuerySchema) {}
+class AllocatableEmployeesResponseDto extends createZodDto(AllocatableEmployeesResponseSchema) {}
 
 /** Section 12.3: leave types, calculation, applications, cancel, balances and leave in lieu. */
 @ApiTags('leave')
@@ -162,6 +166,17 @@ export class LeaveController {
     @Query() query: CreditLeaveQueryDto,
   ): Promise<CreditLeaveListResponseDto> {
     return this.credit.list(ctx, query);
+  }
+
+  /** Leave in lieu ALLOCATION picker: the employees the signed-in user may allocate credit to. */
+  @Get('in-lieu/allocatable-employees')
+  @Roles('MANAGER', 'HR_ADMIN')
+  @ApiOkResponse({ type: AllocatableEmployeesResponseDto })
+  allocatableEmployees(
+    @Ctx() ctx: SecurityContext,
+    @Query() query: AllocatableEmployeesQueryDto,
+  ): Promise<AllocatableEmployeesResponseDto> {
+    return this.credit.allocatableEmployees(ctx, query);
   }
 
   /** "Employees on Leave": the manager's reports on approved or processed leave today. */

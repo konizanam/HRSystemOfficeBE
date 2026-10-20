@@ -13,8 +13,13 @@ import {
   type TemplatesResponse,
   TEMPLATE_STATUS_LABELS,
   type UpdateTemplateRequest,
+  PERFORMANCE_EXPORT_MAX_ROWS,
+  TEMPLATE_EXPORT_COLUMNS,
+  TEMPLATE_SORT_FIELDS,
+  type TemplatesExportQuery,
 } from '@peoplehub/shared';
 import { AuditService } from '../../audit/audit.service';
+import { type ExportFile, gridExport, sortMap } from './performance-export';
 import type { SecurityContext } from '../../common/context/security-context';
 import {
   assertVersion,
@@ -46,13 +51,20 @@ type TemplateRowData = Prisma.PerformanceTemplateGetPayload<{ include: typeof RO
 
 const DETAIL_INCLUDE = { ...ROW_INCLUDE, items: LIVE_ITEMS } satisfies Prisma.PerformanceTemplateInclude;
 
-const SORTS: Record<TemplatesQuery['sort'], Prisma.PerformanceTemplateOrderByWithRelationInput[]> = {
-  'name:asc': [{ name: 'asc' }, { id: 'asc' }],
-  'name:desc': [{ name: 'desc' }, { id: 'desc' }],
-  'contractStartDate:desc': [{ contractStartDate: 'desc' }, { id: 'desc' }],
-  'contractStartDate:asc': [{ contractStartDate: 'asc' }, { id: 'asc' }],
-  'createdAt:desc': [{ createdAt: 'desc' }, { id: 'desc' }],
-};
+type TemplateOrder = Prisma.PerformanceTemplateOrderByWithRelationInput;
+type TemplateSortField = (typeof TEMPLATE_SORT_FIELDS)[number];
+
+const SORTS: Record<TemplatesQuery['sort'], TemplateOrder[]> = sortMap<TemplateSortField, TemplateOrder>({
+  name: (d) => [{ name: d }, { id: d }],
+  contractStartDate: (d) => [{ contractStartDate: d }, { id: d }],
+  contractEndDate: (d) => [{ contractEndDate: d }, { id: d }],
+  ratingScale: (d) => [{ ratingScale: { name: d } }, { id: d }],
+  processDefinition: (d) => [{ processDefinition: { sort: d, nulls: 'last' } }, { id: d }],
+  linkedContracts: (d) => [{ contracts: { _count: d } }, { id: d }],
+  createdFromTemplate: (d) => [{ createdFrom: { name: d } }, { id: d }],
+  status: (d) => [{ status: d }, { name: 'asc' }, { id: d }],
+  createdAt: (d) => [{ createdAt: d }, { id: d }],
+});
 
 function toRow(t: TemplateRowData, owners: Map<string, string>): PerformanceTemplateRow {
   return {
@@ -90,6 +102,23 @@ export class TemplateService {
   async ratingScales(): Promise<RatingScalesResponse> {
     const rows = await this.db.prisma.ratingScale.findMany({ orderBy: { id: 'asc' } });
     return { items: rows.map(toRatingScaleDto) };
+  }
+
+  /** GET /performance/templates/export: the filtered grid as CSV or Excel, audited. */
+  async export(ctx: SecurityContext, query: TemplatesExportQuery): Promise<ExportFile> {
+    const { format, ...filters } = query;
+    const page = await this.list({ ...filters, page: 1, pageSize: PERFORMANCE_EXPORT_MAX_ROWS });
+    await this.audit.recordStandalone(ctx, {
+      category: 'EXPORT',
+      action: 'EXPORT.PERFORMANCE_TEMPLATES',
+      entityType: 'PerformanceTemplate',
+      metadata: { filters, format, rows: page.items.length, truncated: page.total > page.items.length },
+    });
+    return gridExport(page.items, TEMPLATE_EXPORT_COLUMNS, {
+      format,
+      sheet: 'Performance templates',
+      fileBase: 'performance-templates',
+    });
   }
 
   async list(query: TemplatesQuery): Promise<TemplatesResponse> {

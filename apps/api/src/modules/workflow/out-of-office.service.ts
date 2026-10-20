@@ -13,7 +13,7 @@ import {
 } from '@peoplehub/shared';
 import { AuditService } from '../../audit/audit.service';
 import type { SecurityContext } from '../../common/context/security-context';
-import { ConflictError, type FieldError, ValidationError } from '../../common/errors/domain-errors';
+import { type FieldError, ValidationError, VersionConflictError } from '../../common/errors/domain-errors';
 import { DbService } from '../../prisma/db.service';
 import type { Tx } from '../../prisma/prisma-client';
 import { ScopeService } from '../auth/scope.service';
@@ -88,7 +88,7 @@ export class OutOfOfficeService {
         include: { rules: { where: { deletedAt: null } } },
       });
       if ((existing?.version ?? 0) !== input.version) {
-        throw new ConflictError('Your out-of-office settings changed; reload', {
+        throw new VersionConflictError('Your out-of-office settings changed; reload', {
           version: existing?.version ?? 0,
         });
       }

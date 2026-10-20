@@ -12,6 +12,7 @@ import {
   claimStatusFilterOf,
   formatGridDate,
   money2,
+  trimDecimal,
   units4,
   type WorkflowTypeCode,
 } from '@peoplehub/shared';
@@ -102,6 +103,13 @@ export function toClaimLine(
   line: Prisma.ClaimLineGetPayload<{ include: { claimType: true } }>,
   attachments: Attachment[],
 ): ClaimLine {
+  return { ...toClaimLineData(line), attachments };
+}
+
+/** A line without its attachments (the inbox's `ClaimSubjectData`). */
+export function toClaimLineData(
+  line: Prisma.ClaimLineGetPayload<{ include: { claimType: true } }>,
+): Omit<ClaimLine, 'attachments'> {
   return {
     id: line.id,
     sortOrder: line.sortOrder,
@@ -115,9 +123,9 @@ export function toClaimLine(
     startTime: line.startTime,
     endTime: line.endTime,
     quantity: line.quantity === null ? null : units4(line.quantity),
+    quantityDisplay: line.quantity === null ? null : trimDecimal(line.quantity),
     rate: line.rate === null ? null : units4(line.rate),
     amount: money2(line.amount),
     description: line.description,
-    attachments,
   };
 }

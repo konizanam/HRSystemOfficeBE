@@ -5,7 +5,6 @@ import {
   formatTimestampDate,
   type InboxWarning,
   money2,
-  units4,
 } from '@peoplehub/shared';
 import type { Tx } from '../../prisma/prisma-client';
 import type {
@@ -20,7 +19,7 @@ import type {
   WorkflowSubjectHandler,
 } from '../workflow/workflow-subject';
 import { CLAIM_LINE_ENTITY, type ClaimWorkflowType, LIVE_LINES } from './claim-constants';
-import { parseWarnings } from './claim-mapper';
+import { parseWarnings, toClaimLineData } from './claim-mapper';
 import { ClaimService } from './claim.service';
 import { ClaimWriter } from './claim.writer';
 
@@ -61,23 +60,7 @@ export class ClaimWorkflowService {
       description: claim.description,
       currency,
       totalAmount: total,
-      lines: claim.lines.map((l) => ({
-        id: l.id,
-        sortOrder: l.sortOrder,
-        claimType: {
-          id: l.claimType.id,
-          code: l.claimType.code,
-          description: l.claimType.description,
-          inputMode: l.claimType.inputMode,
-        },
-        date: businessFromDate(l.date),
-        startTime: l.startTime,
-        endTime: l.endTime,
-        quantity: l.quantity === null ? null : units4(l.quantity),
-        rate: l.rate === null ? null : units4(l.rate),
-        amount: money2(l.amount),
-        description: l.description,
-      })),
+      lines: claim.lines.map(toClaimLineData),
       warnings,
     };
     return {
@@ -95,6 +78,7 @@ export class ClaimWorkflowService {
         { label: 'Lines', value: String(claim.lines.length) },
         { label: 'Total', value: `${currency} ${total}` },
       ],
+      kind: 'CLAIM',
       data,
       viewLabel: 'View claim',
       attachmentOwners: claim.lines.map((l) => ({ entity: CLAIM_LINE_ENTITY, entityId: String(l.id) })),

@@ -214,6 +214,7 @@ export class EmployeeTransactionService {
         { label: 'Comments', value: row.comment ?? '' },
         { label: 'Reference number', value: row.referenceNumber ?? '' },
       ],
+      kind: 'EMPLOYEE_TRANSACTION',
       data: { employeeTransactionId: row.id, referenceNumber: row.referenceNumber, code: row.code },
       viewLabel: 'View employee transaction',
     };

@@ -5,11 +5,15 @@ import {
   type ArchiveContractRequest,
   businessFromDate,
   canTransitionContract,
+  CONTRACT_EXPORT_COLUMNS,
+  CONTRACT_SORT_FIELDS,
   CONTRACT_STATUS_LABELS,
+  type ContractsExportQuery,
   type ContractsQuery,
   type ContractsResponse,
   dateFromBusiness,
   isContractEditable,
+  PERFORMANCE_EXPORT_MAX_ROWS,
   type PerformanceContract,
   type PerformanceContractRow,
   type UpdateContractRequest,
@@ -27,6 +31,7 @@ import { DbService } from '../../prisma/db.service';
 import type { Tx } from '../../prisma/prisma-client';
 import { ScopeService } from '../auth/scope.service';
 import { PerformanceAccess } from './performance-access';
+import { type ExportFile, gridExport, sortMap } from './performance-export';
 import {
   dateOrNull,
   itemsSnapshot,
@@ -62,15 +67,30 @@ const ROW_INCLUDE = {
 
 type ContractRowData = Prisma.PerformanceContractGetPayload<{ include: typeof ROW_INCLUDE }>;
 
-const SORTS: Record<ContractsQuery['sort'], Prisma.PerformanceContractOrderByWithRelationInput[]> = {
-  'employeeCode:asc': [{ employee: { employeeCode: 'asc' } }, { id: 'asc' }],
-  'employeeCode:desc': [{ employee: { employeeCode: 'desc' } }, { id: 'desc' }],
-  'lastName:asc': [{ employee: { lastName: 'asc' } }, { employee: { firstName: 'asc' } }, { id: 'asc' }],
-  'lastName:desc': [{ employee: { lastName: 'desc' } }, { employee: { firstName: 'desc' } }, { id: 'desc' }],
-  'startDate:desc': [{ startDate: 'desc' }, { id: 'desc' }],
-  'startDate:asc': [{ startDate: 'asc' }, { id: 'asc' }],
-  'contractName:asc': [{ name: 'asc' }, { id: 'asc' }],
-};
+type ContractOrder = Prisma.PerformanceContractOrderByWithRelationInput;
+
+const SORTS: Record<ContractsQuery['sort'], ContractOrder[]> = sortMap<
+  (typeof CONTRACT_SORT_FIELDS)[number],
+  ContractOrder
+>({
+  employeeCode: (d) => [{ employee: { employeeCode: d } }, { id: d }],
+  lastName: (d) => [{ employee: { lastName: d } }, { employee: { firstName: d } }, { id: d }],
+  firstName: (d) => [{ employee: { firstName: d } }, { employee: { lastName: d } }, { id: d }],
+  startDate: (d) => [{ startDate: d }, { id: d }],
+  contractStartDate: (d) => [{ startDate: d }, { id: d }],
+  contractEndDate: (d) => [{ endDate: d }, { id: d }],
+  contractName: (d) => [{ name: d }, { id: d }],
+  templateName: (d) => [{ template: { name: d } }, { id: d }],
+  jobTitle: (d) => [{ employee: { jobTitle: { sort: d, nulls: 'last' } } }, { id: d }],
+  jobGrade: (d) => [{ employee: { jobGrade: { sort: d, nulls: 'last' } } }, { id: d }],
+  employeeCompanyRule: (d) => [{ employee: { companyRule: { description: d } } }, { id: d }],
+  reportsTo: (d) => [{ employee: { reportsTo: { lastName: d } } }, { id: d }],
+  employeeDateEngaged: (d) => [{ employee: { dateEngaged: { sort: d, nulls: 'last' } } }, { id: d }],
+  employeeStatus: (d) => [{ employee: { status: d } }, { id: d }],
+  contractType: (d) => [{ contractType: { sort: d, nulls: 'last' } }, { id: d }],
+  contractStatus: (d) => [{ status: d }, { id: d }],
+  archivedAt: (d) => [{ archivedAt: { sort: d, nulls: 'last' } }, { id: d }],
+});
 
 function toRow(c: ContractRowData, users: Map<string, string>): PerformanceContractRow {
   return {
@@ -183,6 +203,23 @@ export class ContractService {
     return { items: rows.map((r) => toRow(r, users)), total, page: query.page, pageSize: query.pageSize };
   }
 
+  /** GET /performance/contracts/export: the filtered grid (the caller's scope) as CSV or Excel, audited. */
+  async export(ctx: SecurityContext, query: ContractsExportQuery): Promise<ExportFile> {
+    const { format, ...filters } = query;
+    const page = await this.list(ctx, { ...filters, page: 1, pageSize: PERFORMANCE_EXPORT_MAX_ROWS });
+    await this.audit.recordStandalone(ctx, {
+      category: 'EXPORT',
+      action: 'EXPORT.PERFORMANCE_CONTRACTS',
+      entityType: 'PerformanceContract',
+      metadata: { filters, format, rows: page.items.length, truncated: page.total > page.items.length },
+    });
+    return gridExport(page.items, CONTRACT_EXPORT_COLUMNS, {
+      format,
+      sheet: query.archived ? 'Archived contracts' : 'Contracts',
+      fileBase: query.archived ? 'archived-contracts' : 'performance-contracts',
+    });
+  }
+
   async get(ctx: SecurityContext, id: number, client: Tx = this.db.prisma): Promise<PerformanceContract> {
     const c = await client.performanceContract.findUnique({
       where: { id },
@@ -199,6 +236,9 @@ export class ContractService {
       sectionTotals: sectionTotalsOf(c.items),
       allowedStatuses: allowedContractTransitions(c.status, actors),
       canEdit: isContractEditable(c.status) && (actors.includes('HR_ADMIN') || actors.includes('MANAGER')),
+      // The update rule: the manager or HR may change the assignee until the contract is archived.
+      canChangeAssignee:
+        c.status !== 'ARCHIVED' && (actors.includes('HR_ADMIN') || actors.includes('MANAGER')),
     };
   }
 

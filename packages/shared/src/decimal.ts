@@ -36,6 +36,14 @@ export function money2(value: DecimalInput | null | undefined): string {
   return round2(dec(value)).toFixed(2);
 }
 
+/**
+ * Display form of a decimal without trailing zeros ("2.5000" → "2.5", "3.0000" → "3"), rounded
+ * to `dp` places first. Never exponential notation. For display only; contracts keep fixed places.
+ */
+export function trimDecimal(value: DecimalInput | null | undefined, dp = 4): string {
+  return roundTo(dec(value), dp).toFixed();
+}
+
 export function sumDecimals(values: Iterable<DecimalInput>): Decimal {
   let total = new Decimal(0);
   for (const v of values) total = total.plus(dec(v));

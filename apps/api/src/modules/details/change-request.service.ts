@@ -6,6 +6,7 @@ import {
   type ChangeEntityType,
   type ChangeField,
   changeFieldLabel,
+  changeFieldLabelKey,
   type ChangeOperation,
   type ChangeRequestDto,
   type ChangeRequestsQuery,
@@ -356,6 +357,7 @@ export class ChangeRequestService {
       out.push({
         path,
         label: changeFieldLabel(path),
+        labelKey: changeFieldLabelKey(row.entityType as ChangeEntityType, path),
         from: await this.format(client, applier, path, from, false),
         to: await this.format(client, applier, path, to, reveal),
       });
@@ -446,10 +448,12 @@ export class ChangeRequestService {
         { label: 'Change', value: operation },
         ...changes.map((c) => ({ label: c.label, value: `${c.from ?? '(empty)'} → ${c.to ?? '(empty)'}` })),
       ],
+      kind: 'CHANGE_REQUEST',
       data: {
         changeRequestId: cr.id,
         referenceNumber: cr.referenceNumber,
         entityType,
+        entityLabel: CHANGE_ENTITY_LABELS[entityType],
         entityId: cr.entityId,
         operation: cr.operation,
         status: cr.status,

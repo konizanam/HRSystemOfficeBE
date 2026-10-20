@@ -192,6 +192,46 @@ const CASES: MatrixCase[] = [
     path: '/performance/contract-reviews?statuses=OPEN&reviewName=Matrix',
     expect: all(200),
   },
+  // Gap fixes: grid exports (audited EXPORT.*), wider sorts and the scoped pickers.
+  {
+    name: 'GET /performance/templates/export',
+    method: 'get',
+    path: '/performance/templates/export?format=csv&sort=linkedContracts:desc',
+    expect: HR_AND_AUDITOR,
+  },
+  {
+    name: 'GET /performance/contract-initiations/export',
+    method: 'get',
+    path: '/performance/contract-initiations/export?format=xlsx&sort=failedCount:asc',
+    expect: HR_AND_AUDITOR,
+  },
+  {
+    name: 'GET /performance/contracts/export',
+    method: 'get',
+    path: '/performance/contracts/export?format=csv&sort=templateName:asc',
+    expect: all(200),
+  },
+  {
+    name: 'GET /performance/contract-reviews/export',
+    method: 'get',
+    path: '/performance/contract-reviews/export?format=csv&sort=reviewStatus:desc',
+    expect: all(200),
+  },
+  {
+    name: 'GET /performance/contract-initiations?sort=',
+    method: 'get',
+    path: '/performance/contract-initiations?sort=name:asc',
+    expect: HR_AND_AUDITOR,
+  },
+  { name: 'GET /lookups/employees', method: 'get', path: '/lookups/employees?search=t', expect: all(200) },
+  { name: 'GET /lookups/companies', method: 'get', path: '/lookups/companies', expect: all(200) },
+  {
+    name: 'GET /lookups/company-rules',
+    method: 'get',
+    path: (f) => `/lookups/company-rules?companyId=${f.org.companyId}`,
+    expect: all(200),
+  },
+  { name: 'GET /lookups/positions', method: 'get', path: '/lookups/positions', expect: all(200) },
 ];
 
 describe('authorisation matrix: Phase 8 endpoints', () => {

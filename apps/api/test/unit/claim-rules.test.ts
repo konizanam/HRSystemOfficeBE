@@ -243,7 +243,11 @@ describe('stored cap warnings', () => {
       requested: '80.00',
       message: 'Over',
     };
-    expect(parseWarnings([warning, { code: 'OTHER' }, 'x'])).toEqual([warning]);
+    // A warning stored before lineIndex/lineId existed reads with null line references.
+    const legacy = { ...warning, lineIndex: null, lineId: null, lineIndexes: [] };
+    expect(parseWarnings([warning, { code: 'OTHER' }, 'x'])).toEqual([legacy]);
+    const current = { ...warning, lineIndex: 1, lineId: 77, lineIndexes: [1, 3] };
+    expect(parseWarnings([current])).toEqual([current]);
     expect(parseWarnings(null)).toEqual([]);
     expect(parseWarnings({ a: 1 })).toEqual([]);
   });

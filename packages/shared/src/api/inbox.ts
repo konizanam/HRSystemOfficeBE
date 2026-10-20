@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { ProcessStatusSchema, type WorkflowTypeCode, WorkflowTypeCodeSchema } from '../enums';
 import { BusinessDateSchema, pageOf, TimestampSchema } from './common';
+import { SubjectDetailSchema } from './subjects';
 import { StepInstanceSchema, WorkflowPersonSchema } from './workflow';
 
 // Contracts for the inbox (sections 5.10 and 12.7): the category panel, the three tabs, the
@@ -176,27 +177,6 @@ export const InboxCategoriesResponseSchema = z.object({
 });
 export type InboxCategoriesResponse = z.infer<typeof InboxCategoriesResponseSchema>;
 
-/** A label/value pair in the detail panel ("Leave type: Annual Leave"). */
-export const SubjectFieldSchema = z.object({
-  label: z.string(),
-  value: z.string(),
-});
-export type SubjectField = z.infer<typeof SubjectFieldSchema>;
-
-/** The subject DTO a workflow type's handler returns for the detail panel. */
-export const SubjectDetailSchema = z.object({
-  /** Panel heading, e.g. "Leave request". */
-  title: z.string(),
-  requestLabel: z.string(),
-  /** The highlighted figures, e.g. "Days available", "Days to be deducted". */
-  headline: z.array(SubjectFieldSchema),
-  /** The field list in display order. */
-  fields: z.array(SubjectFieldSchema),
-  /** Type-specific data for richer UIs (shape defined by each type's contract). */
-  data: z.record(z.unknown()),
-});
-export type SubjectDetail = z.infer<typeof SubjectDetailSchema>;
-
 export const InboxAttachmentSchema = z.object({
   id: z.string(),
   fileName: z.string(),
@@ -242,6 +222,7 @@ export type InboxWarning = z.infer<typeof InboxWarningSchema>;
 /** GET /inbox/items/:processId: the right-hand detail panel. */
 export const InboxItemDetailSchema = z.object({
   card: InboxCardSchema,
+  /** The request itself; `subject.kind` tells the shape of `subject.data` (see subjects.ts). */
   subject: SubjectDetailSchema,
   submittedBy: WorkflowPersonSchema,
   submittedOnBehalf: z.boolean(),

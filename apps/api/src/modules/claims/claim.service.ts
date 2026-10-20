@@ -750,6 +750,7 @@ export class ClaimService {
           const c = computed.get(l.id);
           return {
             index: lines.indexOf(l),
+            lineId: l.id,
             claimTypeId: l.claimTypeId,
             date: businessFromDate(l.date),
             amount: c?.amount ?? dec(l.amount.toString()),
@@ -773,13 +774,16 @@ export class ClaimService {
       );
     }
     if (ready.caps.errors.length > 0) {
-      throw new DomainError(
+      const error = new DomainError(
         422,
         'Validation failed',
         ready.caps.errors[0]?.message,
         ready.caps.errors,
         CLAIM_PROBLEM_TYPES.capExceeded,
       );
+      // ClaimCapProblem: the BLOCK findings with their lineIndex / lineId.
+      error.extensions = { findings: ready.caps.blocks };
+      throw error;
     }
   }
 
@@ -940,6 +944,7 @@ export class ClaimService {
       payPeriod: claim.payPeriod,
       canEdit: row.canResume,
       approvalHistory: claim.processId !== null ? await this.historyOf(claim.processId) : null,
+      processVersion: claim.process?.version ?? null,
     };
   }
 

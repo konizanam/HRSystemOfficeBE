@@ -1,4 +1,5 @@
 import { HttpException, HttpStatus } from '@nestjs/common';
+import { COMMON_PROBLEM_TYPES, IDEMPOTENCY_IN_PROGRESS_TITLE } from '@peoplehub/shared';
 
 export interface FieldError {
   path: string;
@@ -17,6 +18,8 @@ export interface DenialAudit {
 export class DomainError extends HttpException {
   /** Only used for 401/403. */
   denial?: DenialAudit;
+  /** Extra RFC 7807 members added to the problem body (e.g. a claim's cap `findings`). */
+  extensions?: Record<string, unknown>;
 
   constructor(
     status: number,
@@ -58,8 +61,32 @@ export class ConflictError extends DomainError {
   constructor(
     detail = 'This record changed; reload',
     readonly current?: unknown,
+    type?: string,
   ) {
-    super(HttpStatus.CONFLICT, 'Conflict', detail);
+    super(HttpStatus.CONFLICT, 'Conflict', detail, undefined, type);
+  }
+}
+
+/** 409 for a stale `version` (type `urn:peoplehub:problem:version-conflict`); `current` has the version. */
+export class VersionConflictError extends ConflictError {
+  constructor(detail = 'This record changed; reload', current?: unknown) {
+    super(detail, current, COMMON_PROBLEM_TYPES.versionConflict);
+  }
+}
+
+/**
+ * 409 for a replayed `Idempotency-Key` whose first request is still running (type
+ * `urn:peoplehub:problem:idempotency-in-progress`). Nothing changed; send the same request again.
+ */
+export class IdempotencyInProgressError extends DomainError {
+  constructor(detail = 'A request with this Idempotency-Key is still being processed; retry shortly') {
+    super(
+      HttpStatus.CONFLICT,
+      IDEMPOTENCY_IN_PROGRESS_TITLE,
+      detail,
+      undefined,
+      COMMON_PROBLEM_TYPES.idempotencyInProgress,
+    );
   }
 }
 
@@ -78,6 +105,6 @@ export class ValidationError extends DomainError {
 /** Throws ConflictError unless the client sent the version it read. */
 export function assertVersion(entity: { version: number }, expected: number | undefined): void {
   if (expected === undefined || entity.version !== expected) {
-    throw new ConflictError('This record changed; reload', { version: entity.version });
+    throw new VersionConflictError('This record changed; reload', { version: entity.version });
   }
 }

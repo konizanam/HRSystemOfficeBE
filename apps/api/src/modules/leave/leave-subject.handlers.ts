@@ -89,6 +89,7 @@ async function describeApplication(
           { label: 'Days to be deducted', value: units },
         ],
     fields,
+    kind: 'LEAVE',
     data: {
       applicationId: app.id,
       referenceNumber: app.referenceNumber,

@@ -46,6 +46,8 @@ export interface CycleUsage {
 export interface CapCheckLine {
   /** Index in the request's `lines` (for the field path of a BLOCK error). */
   index: number;
+  /** The saved line's id; null for a line that is not saved yet. */
+  lineId: number | null;
   claimTypeId: number;
   date: BusinessDate;
   amount: Decimal;
@@ -191,7 +193,9 @@ export class ClaimBalanceService {
     for (const { type, cap, window, lines: inCycle } of groups.values()) {
       const usage = await this.usage(client, employee.id, type.type.id, window, excludeClaimId);
       const factor = proRataFactor(window, engaged, terminated);
-      const firstIndex = Math.min(...inCycle.map((l) => l.index));
+      const ordered = [...inCycle].sort((a, b) => a.index - b.index);
+      const first = ordered[0];
+      const firstIndex = first?.index ?? 0;
       const measures: {
         measure: ClaimCapMeasure;
         limit: Decimal | null;
@@ -250,6 +254,9 @@ export class ClaimBalanceService {
           available: measureLabel(m.measure, evaluation.available),
           requested: measureLabel(m.measure, m.requested),
           message,
+          lineIndex: firstIndex,
+          lineId: first?.lineId ?? null,
+          lineIndexes: ordered.map((l) => l.index),
         };
         if (mode === 'WARN') {
           result.warnings.push(finding);

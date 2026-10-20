@@ -1,10 +1,12 @@
-import { Body, Controller, Get, HttpCode, Param, Post, Put, Query } from '@nestjs/common';
-import { ApiCreatedResponse, ApiOkResponse, ApiTags } from '@nestjs/swagger';
+import { Body, Controller, Get, HttpCode, Param, Post, Put, Query, Res } from '@nestjs/common';
+import { ApiCreatedResponse, ApiOkResponse, ApiProduces, ApiTags } from '@nestjs/swagger';
 import {
   ArchiveContractRequestSchema,
   ContractInitiationSchema,
+  ContractReviewsExportQuerySchema,
   ContractReviewsQuerySchema,
   ContractReviewsResponseSchema,
+  ContractsExportQuerySchema,
   ContractsQuerySchema,
   ContractsResponseSchema,
   CopyReviewRequestSchema,
@@ -14,6 +16,7 @@ import {
   CreateReviewResponseSchema,
   CreateTemplateRequestSchema,
   IdParamSchema,
+  InitiationsExportQuerySchema,
   InitiationsQuerySchema,
   InitiationsResponseSchema,
   PerformanceContractSchema,
@@ -26,18 +29,21 @@ import {
   ReviewsResponseSchema,
   ReviewStatusRequestSchema,
   SubmitScoresRequestSchema,
+  TemplatesExportQuerySchema,
   TemplatesQuerySchema,
   TemplatesResponseSchema,
   UpdateContractRequestSchema,
   UpdateReviewRequestSchema,
   UpdateTemplateRequestSchema,
 } from '@peoplehub/shared';
+import type { FastifyReply } from 'fastify';
 import { createZodDto } from 'nestjs-zod';
 import type { SecurityContext } from '../../common/context/security-context';
 import { Idempotent } from '../../common/http/idempotency';
 import { Ctx } from '../../common/http/request';
 import { Roles } from '../auth/decorators';
 import { ContractService } from './contract.service';
+import type { ExportFile } from './performance-export';
 import { InitiationService } from './initiation.service';
 import { ReviewService } from './review.service';
 import { TemplateService } from './template.service';
@@ -72,6 +78,23 @@ class ResultsQueryDto extends createZodDto(ResultsQuerySchema) {}
 class ResultsResponseDto extends createZodDto(ResultsResponseSchema) {}
 class ContractReviewsQueryDto extends createZodDto(ContractReviewsQuerySchema) {}
 class ContractReviewsResponseDto extends createZodDto(ContractReviewsResponseSchema) {}
+class TemplatesExportQueryDto extends createZodDto(TemplatesExportQuerySchema) {}
+class InitiationsExportQueryDto extends createZodDto(InitiationsExportQuerySchema) {}
+class ContractsExportQueryDto extends createZodDto(ContractsExportQuerySchema) {}
+class ContractReviewsExportQueryDto extends createZodDto(ContractReviewsExportQuerySchema) {}
+
+const EXPORT_TYPES = [
+  'text/csv',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+] as const;
+
+async function sendExport(reply: FastifyReply, file: ExportFile): Promise<void> {
+  await reply
+    .header('content-type', file.contentType)
+    .header('content-disposition', `attachment; filename="${file.fileName}"`)
+    .header('cache-control', 'private, no-store')
+    .send(file.body);
+}
 
 /**
  * Section 12.9: templates, contract initiation, contracts, reviews, scores, results and contract
@@ -103,6 +126,18 @@ export class PerformanceController {
   @ApiOkResponse({ type: TemplatesResponseDto })
   listTemplates(@Query() query: TemplatesQueryDto): Promise<TemplatesResponseDto> {
     return this.templates.list(query);
+  }
+
+  /** The filtered templates grid as CSV or Excel (audited EXPORT.PERFORMANCE_TEMPLATES). */
+  @Get('templates/export')
+  @Roles('HR_ADMIN', 'AUDITOR')
+  @ApiProduces(...EXPORT_TYPES)
+  async exportTemplates(
+    @Ctx() ctx: SecurityContext,
+    @Query() query: TemplatesExportQueryDto,
+    @Res() reply: FastifyReply,
+  ): Promise<void> {
+    await sendExport(reply, await this.templates.export(ctx, query));
   }
 
   @Get('templates/:id')
@@ -153,6 +188,18 @@ export class PerformanceController {
     return this.initiations.list(query);
   }
 
+  /** The filtered initiations grid as CSV or Excel (audited EXPORT.CONTRACT_INITIATIONS). */
+  @Get('contract-initiations/export')
+  @Roles('HR_ADMIN', 'AUDITOR')
+  @ApiProduces(...EXPORT_TYPES)
+  async exportInitiations(
+    @Ctx() ctx: SecurityContext,
+    @Query() query: InitiationsExportQueryDto,
+    @Res() reply: FastifyReply,
+  ): Promise<void> {
+    await sendExport(reply, await this.initiations.export(ctx, query));
+  }
+
   @Get('contract-initiations/:id')
   @Roles('HR_ADMIN', 'AUDITOR')
   @ApiOkResponse({ type: ContractInitiationDto })
@@ -181,6 +228,17 @@ export class PerformanceController {
     @Query() query: ContractsQueryDto,
   ): Promise<ContractsResponseDto> {
     return this.contracts.list(ctx, query);
+  }
+
+  /** The filtered contracts grid (the caller's scope) as CSV or Excel (audited EXPORT.PERFORMANCE_CONTRACTS). */
+  @Get('contracts/export')
+  @ApiProduces(...EXPORT_TYPES)
+  async exportContracts(
+    @Ctx() ctx: SecurityContext,
+    @Query() query: ContractsExportQueryDto,
+    @Res() reply: FastifyReply,
+  ): Promise<void> {
+    await sendExport(reply, await this.contracts.export(ctx, query));
   }
 
   @Get('contracts/:id')
@@ -288,6 +346,17 @@ export class PerformanceController {
   @ApiOkResponse({ type: ResultsResponseDto })
   results(@Ctx() ctx: SecurityContext, @Query() query: ResultsQueryDto): Promise<ResultsResponseDto> {
     return this.reviews.list(ctx, query, true);
+  }
+
+  /** The filtered Reviews grid as CSV or Excel (audited EXPORT.CONTRACT_REVIEWS). */
+  @Get('contract-reviews/export')
+  @ApiProduces(...EXPORT_TYPES)
+  async exportContractReviews(
+    @Ctx() ctx: SecurityContext,
+    @Query() query: ContractReviewsExportQueryDto,
+    @Res() reply: FastifyReply,
+  ): Promise<void> {
+    await sendExport(reply, await this.reviews.exportContractReviews(ctx, query));
   }
 
   /** Reviews (contract reviews) with the Filter Selection modal. */

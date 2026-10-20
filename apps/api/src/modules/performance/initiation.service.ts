@@ -9,9 +9,13 @@ import {
   InitiationErrorSchema,
   type InitiationFilters,
   InitiationFiltersSchema,
+  INITIATION_EXPORT_COLUMNS,
+  INITIATION_SORT_FIELDS,
   initiationProgress,
+  type InitiationsExportQuery,
   type InitiationsQuery,
   type InitiationsResponse,
+  PERFORMANCE_EXPORT_MAX_ROWS,
 } from '@peoplehub/shared';
 import { z } from 'zod';
 import { AuditService } from '../../audit/audit.service';
@@ -23,6 +27,7 @@ import { DbService } from '../../prisma/db.service';
 import type { Tx } from '../../prisma/prisma-client';
 import { ContractService } from './contract.service';
 import { PerformanceAccess } from './performance-access';
+import { type ExportFile, gridExport, sortMap } from './performance-export';
 import {
   CONTRACT_INITIATION_ENTITY,
   PERFORMANCE_CONTRACT_ENTITY,
@@ -46,6 +51,24 @@ const PROGRESS_EVERY = 25;
 class InitiationFailure extends Error {}
 
 const ROW_INCLUDE = { template: { select: { name: true } } } satisfies Prisma.ContractInitiationInclude;
+
+type InitiationOrder = Prisma.ContractInitiationOrderByWithRelationInput;
+
+const SORTS: Record<InitiationsQuery['sort'], InitiationOrder[]> = sortMap<
+  (typeof INITIATION_SORT_FIELDS)[number],
+  InitiationOrder
+>({
+  name: (d) => [{ name: d }, { id: d }],
+  templateName: (d) => [{ template: { name: d } }, { id: d }],
+  contractStartDate: (d) => [{ contractStartDate: d }, { id: d }],
+  contractEndDate: (d) => [{ contractEndDate: d }, { id: d }],
+  status: (d) => [{ status: d }, { createdAt: 'desc' }, { id: 'desc' }],
+  contractCount: (d) => [{ contractCount: d }, { id: d }],
+  createdCount: (d) => [{ createdCount: d }, { id: d }],
+  failedCount: (d) => [{ failedCount: d }, { id: d }],
+  lastChanged: (d) => [{ updatedAt: d }, { id: d }],
+  createdAt: (d) => [{ createdAt: d }, { id: d }],
+});
 type InitiationRowData = Prisma.ContractInitiationGetPayload<{ include: typeof ROW_INCLUDE }>;
 
 function storedFilters(value: Prisma.JsonValue): StoredFilters {
@@ -97,6 +120,23 @@ export class InitiationService {
     private readonly access: PerformanceAccess,
   ) {}
 
+  /** GET /performance/contract-initiations/export: the filtered grid as CSV or Excel, audited. */
+  async export(ctx: SecurityContext, query: InitiationsExportQuery): Promise<ExportFile> {
+    const { format, ...filters } = query;
+    const page = await this.list({ ...filters, page: 1, pageSize: PERFORMANCE_EXPORT_MAX_ROWS });
+    await this.audit.recordStandalone(ctx, {
+      category: 'EXPORT',
+      action: 'EXPORT.CONTRACT_INITIATIONS',
+      entityType: 'ContractInitiation',
+      metadata: { filters, format, rows: page.items.length, truncated: page.total > page.items.length },
+    });
+    return gridExport(page.items, INITIATION_EXPORT_COLUMNS, {
+      format,
+      sheet: 'Contract initiations',
+      fileBase: 'contract-initiations',
+    });
+  }
+
   async list(query: InitiationsQuery): Promise<InitiationsResponse> {
     const where: Prisma.ContractInitiationWhereInput = {
       status: query.status,
@@ -106,7 +146,7 @@ export class InitiationService {
       this.db.prisma.contractInitiation.findMany({
         where,
         include: ROW_INCLUDE,
-        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        orderBy: SORTS[query.sort],
         skip: (query.page - 1) * query.pageSize,
         take: query.pageSize,
       }),

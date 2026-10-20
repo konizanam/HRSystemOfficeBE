@@ -60,6 +60,26 @@ function listParam<T extends z.ZodTypeAny>(item: T) {
 const idList = listParam(z.coerce.number().int().positive());
 const textList = listParam(z.string().max(200));
 
+/** `field:asc` and `field:desc` for every field, as a z.enum tuple. */
+function sortsOf<const F extends string>(fields: readonly F[]): [SortOf<F>, ...SortOf<F>[]] {
+  return fields.flatMap((f) => [`${f}:asc`, `${f}:desc`]) as [SortOf<F>, ...SortOf<F>[]];
+}
+type SortOf<F extends string> = `${F}:asc` | `${F}:desc`;
+
+/** Grid export formats (CSV or Excel); every export is audited as `EXPORT.*`. */
+export const PERFORMANCE_EXPORT_FORMATS = ['csv', 'xlsx'] as const;
+export const PerformanceExportFormatSchema = z.enum(PERFORMANCE_EXPORT_FORMATS);
+export type PerformanceExportFormat = z.infer<typeof PerformanceExportFormatSchema>;
+
+/** Most rows one grid export writes (the audit row says when it was cut). */
+export const PERFORMANCE_EXPORT_MAX_ROWS = 10_000;
+
+/** A column of a grid export: the row field and its header. */
+export interface PerformanceExportColumn<K extends string> {
+  key: K;
+  header: string;
+}
+
 function dateOrder(a: string | null | undefined, b: string | null | undefined): boolean {
   return !a || !b || b >= a;
 }
@@ -213,22 +233,40 @@ export const PerformanceTemplateSchema = PerformanceTemplateRowSchema.extend({
 });
 export type PerformanceTemplate = z.infer<typeof PerformanceTemplateSchema>;
 
-export const TEMPLATE_SORTS = [
-  'name:asc',
-  'name:desc',
-  'contractStartDate:desc',
-  'contractStartDate:asc',
-  'createdAt:desc',
+/** Sortable columns of the templates grid (`?sort=field:asc|desc`). */
+export const TEMPLATE_SORT_FIELDS = [
+  'name',
+  'contractStartDate',
+  'contractEndDate',
+  'ratingScale',
+  'processDefinition',
+  'linkedContracts',
+  'createdFromTemplate',
+  'status',
+  'createdAt',
 ] as const;
+export const TEMPLATE_SORTS = sortsOf(TEMPLATE_SORT_FIELDS);
+export type TemplateSort = (typeof TEMPLATE_SORTS)[number];
 
-export const TemplatesQuerySchema = z.object({
+const templateFilterShape = {
   status: TemplateStatusSchema.optional(),
   search: z.string().trim().max(100).optional(),
   sort: z.enum(TEMPLATE_SORTS).default('name:asc'),
+};
+
+export const TemplatesQuerySchema = z.object({
+  ...templateFilterShape,
   page: z.coerce.number().int().min(1).default(1),
   pageSize: z.coerce.number().int().min(1).max(100).default(25),
 });
 export type TemplatesQuery = z.infer<typeof TemplatesQuerySchema>;
+
+/** GET /performance/templates/export?…&format=csv|xlsx (audited `EXPORT.PERFORMANCE_TEMPLATES`). */
+export const TemplatesExportQuerySchema = z.object({
+  ...templateFilterShape,
+  format: PerformanceExportFormatSchema.default('csv'),
+});
+export type TemplatesExportQuery = z.infer<typeof TemplatesExportQuerySchema>;
 
 export const TemplatesResponseSchema = pageOf(PerformanceTemplateRowSchema);
 export type TemplatesResponse = z.infer<typeof TemplatesResponseSchema>;
@@ -335,30 +373,75 @@ export const ContractInitiationSchema = ContractInitiationRowSchema.extend({
 });
 export type ContractInitiation = z.infer<typeof ContractInitiationSchema>;
 
-export const InitiationsQuerySchema = z.object({
+/** Sortable columns of the Contract Initiation grid. */
+export const INITIATION_SORT_FIELDS = [
+  'name',
+  'templateName',
+  'contractStartDate',
+  'contractEndDate',
+  'status',
+  'contractCount',
+  'createdCount',
+  'failedCount',
+  'lastChanged',
+  'createdAt',
+] as const;
+export const INITIATION_SORTS = sortsOf(INITIATION_SORT_FIELDS);
+export type InitiationSort = (typeof INITIATION_SORTS)[number];
+
+const initiationFilterShape = {
   status: InitiationStatusSchema.optional(),
   search: z.string().trim().max(100).optional(),
+  /** Default: newest first (the order before sorting existed). */
+  sort: z.enum(INITIATION_SORTS).default('createdAt:desc'),
+};
+
+export const InitiationsQuerySchema = z.object({
+  ...initiationFilterShape,
   page: z.coerce.number().int().min(1).default(1),
   pageSize: z.coerce.number().int().min(1).max(100).default(25),
 });
 export type InitiationsQuery = z.infer<typeof InitiationsQuerySchema>;
+
+/** GET /performance/contract-initiations/export (audited `EXPORT.CONTRACT_INITIATIONS`). */
+export const InitiationsExportQuerySchema = z.object({
+  ...initiationFilterShape,
+  format: PerformanceExportFormatSchema.default('csv'),
+});
+export type InitiationsExportQuery = z.infer<typeof InitiationsExportQuerySchema>;
 
 export const InitiationsResponseSchema = pageOf(ContractInitiationRowSchema);
 export type InitiationsResponse = z.infer<typeof InitiationsResponseSchema>;
 
 // ───────────── Contracts (/performance/contracts) ─────────────
 
-export const CONTRACT_SORTS = [
-  'employeeCode:asc',
-  'employeeCode:desc',
-  'lastName:asc',
-  'lastName:desc',
-  'startDate:desc',
-  'startDate:asc',
-  'contractName:asc',
+/**
+ * Sortable columns of the Contracts grids. `startDate` (kept from the first release) and
+ * `contractStartDate` both sort by the contract start.
+ */
+export const CONTRACT_SORT_FIELDS = [
+  'employeeCode',
+  'lastName',
+  'firstName',
+  'startDate',
+  'contractStartDate',
+  'contractEndDate',
+  'contractName',
+  'templateName',
+  'jobTitle',
+  'jobGrade',
+  'employeeCompanyRule',
+  'reportsTo',
+  'employeeDateEngaged',
+  'employeeStatus',
+  'contractType',
+  'contractStatus',
+  'archivedAt',
 ] as const;
+export const CONTRACT_SORTS = sortsOf(CONTRACT_SORT_FIELDS);
+export type ContractSort = (typeof CONTRACT_SORTS)[number];
 
-export const ContractsQuerySchema = z.object({
+const contractFilterShape = {
   /** false (default) = Contracts; true = Archived Contracts. */
   archived: BooleanQuerySchema.default(false),
   employeeId: z.coerce.number().int().positive().optional(),
@@ -367,10 +450,21 @@ export const ContractsQuerySchema = z.object({
   status: ContractStatusSchema.optional(),
   search: z.string().trim().max(100).optional(),
   sort: z.enum(CONTRACT_SORTS).default('employeeCode:asc'),
+};
+
+export const ContractsQuerySchema = z.object({
+  ...contractFilterShape,
   page: z.coerce.number().int().min(1).default(1),
   pageSize: z.coerce.number().int().min(1).max(100).default(25),
 });
 export type ContractsQuery = z.infer<typeof ContractsQuerySchema>;
+
+/** GET /performance/contracts/export (audited `EXPORT.PERFORMANCE_CONTRACTS`). */
+export const ContractsExportQuerySchema = z.object({
+  ...contractFilterShape,
+  format: PerformanceExportFormatSchema.default('csv'),
+});
+export type ContractsExportQuery = z.infer<typeof ContractsExportQuerySchema>;
 
 /** One row of the Contracts / Archived Contracts grid (section 5.9). */
 export const PerformanceContractRowSchema = z.object({
@@ -409,6 +503,11 @@ export const PerformanceContractSchema = PerformanceContractRowSchema.extend({
   /** Statuses the caller may move the contract to (PUT `status`, or archive). */
   allowedStatuses: z.array(ContractStatusSchema),
   canEdit: z.boolean(),
+  /**
+   * The caller may change `currentlyAssignedUserId` (PUT): the employee's manager or HR in scope,
+   * until the contract is archived (ASSUMPTION A95).
+   */
+  canChangeAssignee: z.boolean(),
 });
 export type PerformanceContract = z.infer<typeof PerformanceContractSchema>;
 
@@ -685,6 +784,10 @@ export const ReviewRowSchema = z.object({
   createdAt: TimestampSchema,
   updatedAt: TimestampSchema,
   version: z.number().int(),
+  /** The caller may change the review (PUT): HR in scope while it is DRAFT or OPEN. */
+  canEdit: z.boolean(),
+  /** Statuses the caller may move the review to (POST …/status). */
+  allowedStatuses: z.array(ReviewStatusSchema),
 });
 export type ReviewRow = z.infer<typeof ReviewRowSchema>;
 
@@ -759,55 +862,78 @@ export type ResultsResponse = z.infer<typeof ResultsResponseSchema>;
 
 // ───────────── Contract reviews (GET /performance/contract-reviews) ─────────────
 
-export const CONTRACT_REVIEW_SORTS = [
-  'employeeSurname:asc',
-  'employeeSurname:desc',
-  'reviewName:asc',
-  'reviewName:desc',
-  'reviewCycleStartDate:desc',
-  'reviewCycleStartDate:asc',
-  'reviewTotalActual:desc',
-  'reviewTotalActual:asc',
+/** Sortable columns of the Reviews (contract reviews) grid. */
+export const CONTRACT_REVIEW_SORT_FIELDS = [
+  'employeeSurname',
+  'employeeName',
+  'employeeCompany',
+  'employeeCompanyRule',
+  'employeePosition',
+  'contractName',
+  'reviewName',
+  'reviewCategory',
+  'reviewType',
+  'reviewCycleStartDate',
+  'reviewCycleEndDate',
+  'reviewStatus',
+  'reviewTotalActual',
 ] as const;
+export const CONTRACT_REVIEW_SORTS = sortsOf(CONTRACT_REVIEW_SORT_FIELDS);
+export type ContractReviewSort = (typeof CONTRACT_REVIEW_SORTS)[number];
+
+function contractReviewRanges(
+  v: { startFrom?: string; startTo?: string; endFrom?: string; endTo?: string },
+  ctx: z.RefinementCtx,
+): void {
+  if (!dateOrder(v.startFrom, v.startTo))
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['startTo'],
+      message: 'The range ends before it starts',
+    });
+  if (!dateOrder(v.endFrom, v.endTo))
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['endTo'],
+      message: 'The range ends before it starts',
+    });
+}
 
 /** The Filter Selection modal (section 5.9): every multi-select plus name, statuses and dates. */
+const contractReviewFilterShape = {
+  companies: idList,
+  companyRules: idList,
+  employees: idList,
+  /** Job titles (Employee.jobTitle). */
+  positions: textList,
+  reviewTypes: textList,
+  reviewCategories: textList,
+  /** Review Name contains. */
+  reviewName: z.string().trim().max(200).optional(),
+  statuses: listParam(ReviewStatusSchema),
+  /** Start Date Between / And (review cycle start). */
+  startFrom: BusinessDateSchema.optional(),
+  startTo: BusinessDateSchema.optional(),
+  /** End Date Between / And (review cycle end). */
+  endFrom: BusinessDateSchema.optional(),
+  endTo: BusinessDateSchema.optional(),
+  sort: z.enum(CONTRACT_REVIEW_SORTS).default('employeeSurname:asc'),
+};
+
 export const ContractReviewsQuerySchema = z
   .object({
-    companies: idList,
-    companyRules: idList,
-    employees: idList,
-    /** Job titles (Employee.jobTitle). */
-    positions: textList,
-    reviewTypes: textList,
-    reviewCategories: textList,
-    /** Review Name contains. */
-    reviewName: z.string().trim().max(200).optional(),
-    statuses: listParam(ReviewStatusSchema),
-    /** Start Date Between / And (review cycle start). */
-    startFrom: BusinessDateSchema.optional(),
-    startTo: BusinessDateSchema.optional(),
-    /** End Date Between / And (review cycle end). */
-    endFrom: BusinessDateSchema.optional(),
-    endTo: BusinessDateSchema.optional(),
-    sort: z.enum(CONTRACT_REVIEW_SORTS).default('employeeSurname:asc'),
+    ...contractReviewFilterShape,
     page: z.coerce.number().int().min(1).default(1),
     pageSize: z.coerce.number().int().min(1).max(100).default(25),
   })
-  .superRefine((v, ctx) => {
-    if (!dateOrder(v.startFrom, v.startTo))
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['startTo'],
-        message: 'The range ends before it starts',
-      });
-    if (!dateOrder(v.endFrom, v.endTo))
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['endTo'],
-        message: 'The range ends before it starts',
-      });
-  });
+  .superRefine(contractReviewRanges);
 export type ContractReviewsQuery = z.infer<typeof ContractReviewsQuerySchema>;
+
+/** GET /performance/contract-reviews/export: the same filters (audited `EXPORT.CONTRACT_REVIEWS`). */
+export const ContractReviewsExportQuerySchema = z
+  .object({ ...contractReviewFilterShape, format: PerformanceExportFormatSchema.default('csv') })
+  .superRefine(contractReviewRanges);
+export type ContractReviewsExportQuery = z.infer<typeof ContractReviewsExportQuerySchema>;
 
 /** One row of the Reviews (contract reviews) grid (section 5.9). */
 export const ContractReviewRowSchema = z.object({
@@ -834,3 +960,66 @@ export type ContractReviewRow = z.infer<typeof ContractReviewRowSchema>;
 
 export const ContractReviewsResponseSchema = pageOf(ContractReviewRowSchema);
 export type ContractReviewsResponse = z.infer<typeof ContractReviewsResponseSchema>;
+
+// ───────────── Grid exports (CSV / Excel) ─────────────
+
+export const TEMPLATE_EXPORT_COLUMNS: readonly PerformanceExportColumn<keyof PerformanceTemplateRow>[] = [
+  { key: 'name', header: 'Template Name' },
+  { key: 'contractStartDate', header: 'Contract Start Date' },
+  { key: 'contractEndDate', header: 'Contract End Date' },
+  { key: 'ratingScale', header: 'Overall Rating Scale' },
+  { key: 'processDefinition', header: 'Process Definition' },
+  { key: 'linkedContracts', header: 'Linked Contracts' },
+  { key: 'templateOwner', header: 'Template Owner' },
+  { key: 'createdFromTemplate', header: 'Created From Template' },
+  { key: 'status', header: 'Status' },
+];
+
+export const INITIATION_EXPORT_COLUMNS: readonly PerformanceExportColumn<keyof ContractInitiationRow>[] = [
+  { key: 'name', header: 'Contract Name' },
+  { key: 'templateName', header: 'Template' },
+  { key: 'contractStartDate', header: 'Contract Start Date' },
+  { key: 'contractEndDate', header: 'Contract End Date' },
+  { key: 'status', header: 'Status' },
+  { key: 'progress', header: 'Progress (%)' },
+  { key: 'contractCount', header: 'Contract Count' },
+  { key: 'createdCount', header: 'Created' },
+  { key: 'failedCount', header: 'Failed' },
+  { key: 'lastChanged', header: 'Last Changed' },
+  { key: 'createdBy', header: 'Created By' },
+];
+
+export const CONTRACT_EXPORT_COLUMNS: readonly PerformanceExportColumn<keyof PerformanceContractRow>[] = [
+  { key: 'employeeCode', header: 'Employee Code' },
+  { key: 'firstName', header: 'First Name' },
+  { key: 'lastName', header: 'Last Name' },
+  { key: 'contractName', header: 'Contract Name' },
+  { key: 'templateName', header: 'Template' },
+  { key: 'contractStartDate', header: 'Contract Start Date' },
+  { key: 'contractEndDate', header: 'Contract End Date' },
+  { key: 'jobTitle', header: 'Job Title' },
+  { key: 'jobGrade', header: 'Job Grade' },
+  { key: 'employeeCompanyRule', header: 'Company Rule' },
+  { key: 'reportsTo', header: 'Reports To' },
+  { key: 'employeeDateEngaged', header: 'Date Engaged' },
+  { key: 'employeeStatus', header: 'Employee Status' },
+  { key: 'contractType', header: 'Contract Type' },
+  { key: 'contractStatus', header: 'Contract Status' },
+  { key: 'currentlyAssigned', header: 'Currently Assigned' },
+];
+
+export const CONTRACT_REVIEW_EXPORT_COLUMNS: readonly PerformanceExportColumn<keyof ContractReviewRow>[] = [
+  { key: 'employeeName', header: 'Employee Name' },
+  { key: 'employeeSurname', header: 'Employee Surname' },
+  { key: 'employeeCompany', header: 'Company' },
+  { key: 'employeeCompanyRule', header: 'Company Rule' },
+  { key: 'employeePosition', header: 'Position' },
+  { key: 'contractName', header: 'Contract Name' },
+  { key: 'reviewName', header: 'Review Name' },
+  { key: 'reviewCategory', header: 'Review Category' },
+  { key: 'reviewType', header: 'Review Type' },
+  { key: 'reviewCycleStartDate', header: 'Review Cycle Start Date' },
+  { key: 'reviewCycleEndDate', header: 'Review Cycle End Date' },
+  { key: 'reviewStatus', header: 'Review Status' },
+  { key: 'reviewTotalActual', header: 'Review Total Actual' },
+];

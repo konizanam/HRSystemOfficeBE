@@ -141,6 +141,18 @@ const CASES: MatrixCase[] = [
   },
   { name: 'GET /leave/in-lieu', method: 'get', path: '/leave/in-lieu', expect: all(200) },
   {
+    name: 'GET /leave/in-lieu/allocatable-employees',
+    method: 'get',
+    path: '/leave/in-lieu/allocatable-employees?search=a',
+    expect: only(['managerB', 'hrAdmin'], 200),
+  },
+  {
+    name: 'GET /leave/applications (sorted and filtered)',
+    method: 'get',
+    path: () => `/leave/applications?status=completed&sort=referenceNumber:asc&leaveTypeId=1&from=${monday}`,
+    expect: all(200),
+  },
+  {
     name: 'GET /leave/team/on-leave-today',
     method: 'get',
     path: '/leave/team/on-leave-today',

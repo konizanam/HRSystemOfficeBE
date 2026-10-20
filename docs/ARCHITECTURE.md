@@ -48,6 +48,7 @@ modules/<feature>/    one Nest module per feature (auth, workflow, leave, claims
                       (dry run, commit, PDF generation), PayrollDocumentsService (viewers, branding)
   dashboard/          widget layout, summary, upcoming birthdays
   reports/            report registry, scope, runner and streaming writers; definitions/ per group
+  lookups/            scoped pickers: GET /lookups/employees, companies, company-rules, positions
 pdf/                  PdfService (pdfmake, embedded Roboto) and the document definitions
 notifications/templates/  plain HTML email templates (copied to dist by the Nest CLI)
 cli/                  audit-verify, keys-rotate
@@ -107,12 +108,13 @@ return this.db.tx(ctx, async (tx) => {
 
 - Request DTOs are `createZodDto(Schema)` classes, and the schemas live in `packages/shared/src/api/<feature>.ts`.
 - Business rule failures throw `ValidationError([{ path, message }])`, which returns 422 with field errors. Other errors: `NotFoundError` (404), `ForbiddenError` (403, audited automatically), `ConflictError` (409).
+- A stale `version` is a `VersionConflictError` (what `assertVersion` throws), type `COMMON_PROBLEM_TYPES.versionConflict`; use it for any hand-written version check. Extra problem members go in `DomainError.extensions` (for example a claim's cap `findings`); `ProblemFilter` adds them without overwriting the standard ones.
 - Decimals travel as strings (`units4()`, `money2()`), business dates as `YYYY-MM-DD`, timestamps as ISO-8601 UTC.
 - Pagination is `?page=&pageSize=` (max 100) and returns `{ items, total, page, pageSize }`.
 
 ### Submits
 
-`POST …/submit` endpoints use `@Idempotent()`. A replay with the same `Idempotency-Key` returns the original response.
+`POST …/submit` endpoints use `@Idempotent()`. A replay with the same `Idempotency-Key` returns the original response; a replay while the first request is still running answers 409 with type `COMMON_PROBLEM_TYPES.idempotencyInProgress` (retry), never the version-conflict type (reload).
 
 ### Jobs
 
@@ -238,6 +240,7 @@ Rules for handlers:
 - Write through `hook.tx` and record your own domain audit rows (`LEAVE.APPROVED`, …); the engine writes the `WORKFLOW.*` rows.
 - Payroll types (`PAYROLL_PROCESSED_WORKFLOW_TYPES`) get `onProcess` from `POST /workflow/processes/process` or `workflow.autoProcess.{TYPE}`; other types apply their change in `onFinalApproval` and never get `onProcess`.
 - `describe` is read-only and is called for every inbox card, so keep it to one or two queries.
+- `describe` returns a `kind` with `data` of that kind's shared schema (`packages/shared/src/api/subjects.ts`); the inbox detail sends both, so the web app can switch on `subject.kind`. Leaving `kind` out means GENERIC (an open object). A new subject shape gets a new kind and schema there.
 - A type with no handler uses `GenericSubjectHandler`, which describes the request by its summary.
 - Use `engine.cancel(ctx, processId, { comment })` when your domain cancels a request (for example an approved leave cancellation), and `engine.reresolveForUser(userId)` from the employee termination flow.
 
@@ -331,6 +334,7 @@ scores ──▶ participant totals (Σ rating × weight / 100, normalised) ─�
 - **Notifications** (`ReviewNotifier`): Immediately on opening, Specific Date through the daily `performance.reviewNotify` job, once per review (`Review.notifiedAt`), in-app and by email (`performance-review`).
 - **Scope** (`PerformanceAccess`): HR in their companies, auditors everywhere, employees their own (reviews once opened), reviewers their participations, managers their reports, and the assignee their contract. List queries use `contractWhere`/`reviewWhere`; details check the same rules and answer 403 (audited).
 - **Seed** (`PerformanceSeedService`, also used by the test kit): the parameter tables, the "1–5" scale and one active template.
+- **Grids**: sorts are `field:asc|desc` for each column (`*_SORT_FIELDS` in the shared contract, `sortMap` in `performance-export.ts` builds the orderBy). The `…/export` endpoints reuse the list method with the export's filters and `gridExport` (exceljs, CSV or Excel), and audit `EXPORT.*` with the filters and row count.
 
 ## Payslips and tax certificates
 

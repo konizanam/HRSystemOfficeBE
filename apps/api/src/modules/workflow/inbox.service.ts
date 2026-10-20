@@ -36,7 +36,7 @@ import {
   toSnapshot,
   typeCode,
 } from './process-shape';
-import { WorkflowSubjectRegistry } from './subject-registry';
+import { toSubjectDetail, WorkflowSubjectRegistry } from './subject-registry';
 import { WorkflowAccessService } from './workflow-access.service';
 import { WorkflowHistoryService } from './workflow-history.service';
 import type { SubjectDescription, SubjectViewer } from './workflow-subject';
@@ -416,13 +416,7 @@ export class InboxService {
 
     return {
       card,
-      subject: {
-        title: description.title,
-        requestLabel: description.requestLabel,
-        headline: description.headline,
-        fields: description.fields,
-        data: description.data,
-      },
+      subject: toSubjectDetail(description),
       submittedBy: persons.get(p.submittedByUserId) ?? unknownPerson(p.submittedByUserId),
       submittedOnBehalf: p.submittedOnBehalf,
       attachments: attachments.map((a) => ({

@@ -13,13 +13,15 @@ import type { FastifyReply, FastifyRequest } from 'fastify';
 import { catchError, from, type Observable, of, switchMap } from 'rxjs';
 import { canonicalJson, sha256Hex } from '../../audit/canonical-json';
 import { DbService } from '../../prisma/db.service';
-import { ConflictError, ValidationError } from '../errors/domain-errors';
+import { IdempotencyInProgressError, ValidationError } from '../errors/domain-errors';
 
 const PENDING_STATUS = 0;
 
 /**
  * `Idempotency-Key` support for submit endpoints (section 0.9). The first request reserves the key;
- * a replay with the same payload returns the original status and body; a concurrent replay gets 409.
+ * a replay with the same payload returns the original status and body; a replay while the first
+ * request is still running gets 409 with the `idempotency-in-progress` problem type (not the
+ * version-conflict one), so the client retries instead of reloading.
  */
 @Injectable()
 export class IdempotencyInterceptor implements NestInterceptor {
@@ -59,16 +61,14 @@ export class IdempotencyInterceptor implements NestInterceptor {
         } catch (err) {
           if (!(err instanceof Prisma.PrismaClientKnownRequestError) || err.code !== 'P2002') throw err;
           const existing = await prisma.idempotencyRecord.findUnique({ where: { key } });
-          if (!existing) throw new ConflictError('Request is being processed; retry shortly');
+          if (!existing) throw new IdempotencyInProgressError();
           if (existing.requestHash !== requestHash) {
             throw ValidationError.field(
               'Idempotency-Key',
               'Idempotency-Key was already used with a different request',
             );
           }
-          if (existing.responseStatus === PENDING_STATUS) {
-            throw new ConflictError('A request with this Idempotency-Key is still being processed');
-          }
+          if (existing.responseStatus === PENDING_STATUS) throw new IdempotencyInProgressError();
           return existing;
         }
       })(),

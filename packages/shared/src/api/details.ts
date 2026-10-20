@@ -61,6 +61,34 @@ function text(max: number) {
   return z.preprocess(blankToNull, z.string().trim().max(max).nullable()).optional();
 }
 
+/**
+ * `{ clear: true }`: the explicit "remove this number" action for an encrypted number the form
+ * only shows masked (`••••1234`). A form cannot tell "left blank" from "emptied" for such a
+ * field, so a blank or missing value keeps the stored number and `{ clear: true }` removes it.
+ */
+export const ClearSensitiveValueSchema = z.object({ clear: z.literal(true) }).strict();
+export type ClearSensitiveValue = z.infer<typeof ClearSensitiveValueSchema>;
+
+/** True when a form value is the explicit clear action. */
+export function isClearSensitiveValue(value: unknown): value is ClearSensitiveValue {
+  return ClearSensitiveValueSchema.safeParse(value).success;
+}
+
+/**
+ * An encrypted number on a change (ID, passport, tax and birth certificate numbers, a family
+ * member's or beneficiary's ID number): a new value replaces it, `{ clear: true }` removes it
+ * (the change request then proposes null, and the change is audited as a change to null), and a
+ * missing field keeps it. `''`/null are still accepted as a clear for older clients.
+ */
+function sensitiveText(max: number) {
+  return z
+    .union([
+      ClearSensitiveValueSchema.transform(() => null),
+      z.preprocess(blankToNull, z.string().trim().max(max).nullable()),
+    ])
+    .optional();
+}
+
 /** A required name on create; when sent on update it cannot be blank. */
 function requiredText(max: number) {
   return z.string().trim().min(1, 'This field is required').max(max);
@@ -260,7 +288,14 @@ export const CHANGE_ENTITY_LABELS: Record<ChangeEntityType, string> = {
 export const ChangeFieldSchema = z.object({
   /** Dotted path, e.g. `identity.lastName`; the web app greys out these fields. */
   path: z.string(),
+  /** English form label, e.g. "First Name". */
   label: z.string(),
+  /**
+   * Stable i18n key of the label, e.g. `details.personal.firstName` or
+   * `details.personal.physicalAddress.city` (see {@link changeFieldLabelKey}); translate it and
+   * fall back to `label`.
+   */
+  labelKey: z.string(),
   from: z.string().nullable(),
   to: z.string().nullable(),
 });
@@ -348,15 +383,15 @@ export const PersonalIdentityInputSchema = z.object({
   otherNames: text(150),
   knownAs: text(100),
   maidenName: text(100),
-  identityNumber: text(40),
+  identityNumber: sensitiveText(40),
   dateOfBirth: z.preprocess(blankToNull, EmployeeDateOfBirthSchema.nullable()).optional(),
   identityType: text(60),
   countryOfBirth: optionalCountry,
-  passportNumber: text(40),
+  passportNumber: sensitiveText(40),
   passportCountry: optionalCountry,
-  taxNumber: text(40),
+  taxNumber: sensitiveText(40),
   nationality: optionalCountry,
-  birthCertificateNumber: text(40),
+  birthCertificateNumber: sensitiveText(40),
   cityOfBirth: text(100),
   homeLanguage: text(60),
   gender: text(60),
@@ -369,7 +404,8 @@ export type PersonalIdentityInput = z.infer<typeof PersonalIdentityInputSchema>;
 /**
  * PUT /me/personal (and PUT /admin/employees/:id/personal for HR). Every section is optional and a
  * missing field is unchanged; `''` or null clears a field. The encrypted numbers (identity,
- * passport, tax, birth certificate) are only sent when they change.
+ * passport, tax, birth certificate) are only sent when they change: a new value, or
+ * `{ clear: true }` to remove the number without revealing it first.
  */
 export const UpdatePersonalDetailsRequestSchema = z.object({
   /** `version` of the personal details as read. */
@@ -746,7 +782,7 @@ const FamilyShape = {
   otherNames: text(150),
   lastName: requiredText(100),
   knownAs: text(100),
-  identityNumber: text(40),
+  identityNumber: sensitiveText(40),
   gender: text(60),
   dateOfBirth: z.preprocess(blankToNull, FamilyDateOfBirthSchema.nullable()).optional(),
   nationality: optionalCountry,
@@ -821,7 +857,7 @@ export const BeneficiaryInputSchema = z
     familyMemberId: z.number().int().positive().nullable().optional(),
     name: text(150),
     relationship: text(60),
-    identityNumber: text(40),
+    identityNumber: sensitiveText(40),
     percentage: PercentageSchema,
   })
   .superRefine((row, ctx) => {
@@ -1124,3 +1160,54 @@ export function changeFieldLabel(path: string): string {
   if (leaf === undefined) return OTHER_LABELS[head] ?? IDENTITY_LABELS[head] ?? head;
   return path;
 }
+
+/** The i18n namespace of each record's field labels. */
+export const CHANGE_ENTITY_LABEL_KEYS: Record<ChangeEntityType, string> = {
+  Employee: 'details.personal',
+  BankAccount: 'details.bank',
+  DriversLicence: 'details.licence',
+  FamilyMember: 'details.family',
+  FundMembership: 'details.beneficiaries',
+};
+
+/**
+ * The stable i18n key of a changed field's label: the record's namespace plus the field path,
+ * without the `identity` section and list indexes. `identity.firstName` on personal details →
+ * `details.personal.firstName`; `physicalAddress.city` → `details.personal.physicalAddress.city`;
+ * `accountNumber` on a bank account → `details.bank.accountNumber`.
+ */
+export function changeFieldLabelKey(entityType: ChangeEntityType, path: string): string {
+  const parts = path.split('.').filter((part) => part !== '' && !/^\d+$/.test(part));
+  if (parts[0] === 'identity' && parts.length > 1) parts.shift();
+  return [CHANGE_ENTITY_LABEL_KEYS[entityType], ...parts].join('.');
+}
+
+// ───────────── Inbox subject data (BASICINF, BANKDET, DRIVERSLICENSE, BENEFICIARY, FREETEXTMANEMP) ─────────────
+
+/**
+ * `subject.data` of a change request in the inbox detail: the Field / Before / After rows
+ * (`changes`), sensitive values masked unless `revealed` (a payroll administrator reviewing a new
+ * bank account number).
+ */
+export const ChangeSubjectDataSchema = z.object({
+  changeRequestId: z.number().int(),
+  referenceNumber: z.string(),
+  entityType: ChangeEntityTypeSchema,
+  /** e.g. "Personal details", "Bank account". */
+  entityLabel: z.string(),
+  /** Null for a create that is not applied yet. */
+  entityId: z.string().nullable(),
+  operation: ChangeOperationSchema,
+  status: ProcessStatusSchema,
+  changes: z.array(ChangeFieldSchema),
+  revealed: z.boolean(),
+});
+export type ChangeSubjectData = z.infer<typeof ChangeSubjectDataSchema>;
+
+/** `subject.data` of an employee transaction input (FREETEXTMANEMP) in the inbox detail. */
+export const EmployeeTransactionSubjectDataSchema = z.object({
+  employeeTransactionId: z.number().int(),
+  referenceNumber: z.string().nullable(),
+  code: z.string(),
+});
+export type EmployeeTransactionSubjectData = z.infer<typeof EmployeeTransactionSubjectDataSchema>;

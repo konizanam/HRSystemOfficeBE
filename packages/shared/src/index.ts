@@ -30,3 +30,4 @@ export * from './api/payslips';
 export * from './api/tax';
 export * from './api/dashboard';
 export * from './api/reports';
+export * from './api/subjects';

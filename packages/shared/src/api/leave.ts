@@ -11,7 +11,7 @@ import {
   ProcessStatusSchema,
 } from '../enums';
 import { AttachmentIdsSchema, AttachmentSchema } from './attachments';
-import { BusinessDateSchema, DecimalStringSchema, pageOf, TimestampSchema } from './common';
+import { BusinessDateSchema, DecimalStringSchema, pageOf, SearchTextSchema, TimestampSchema } from './common';
 import { ApprovalHistorySchema } from './workflow';
 
 // Contracts for Leave (sections 5.2 and 12.3): leave types and reasons, the unit calculation
@@ -251,13 +251,47 @@ export const LEAVE_HISTORY_STATUSES: Record<LeaveHistoryFilter, ProcessStatus[]>
   inProgress: ['DRAFT', 'IN_PROGRESS', 'RESUBMIT_REQUIRED', 'APPROVED_PENDING_PROCESS'],
 };
 
-/** GET /leave/applications?status=completed|inProgress&employeeId=. Sorted by From Date, newest first. */
-export const LeaveApplicationsQuerySchema = z.object({
-  status: LeaveHistoryFilterSchema.default('inProgress'),
-  employeeId: z.coerce.number().int().positive().optional(),
-  page: z.coerce.number().int().min(1).default(1),
-  pageSize: z.coerce.number().int().min(1).max(100).default(50),
-});
+/**
+ * Server-side sorts of the history grids (`?sort=field:dir`). The default is From Date newest
+ * first (section 5.2.3); ties fall back to the newest application. Rows without a submitted
+ * date (take-ons) sort last either way.
+ */
+export const LEAVE_APPLICATION_SORTS = [
+  'fromDate:desc',
+  'fromDate:asc',
+  'toDate:desc',
+  'toDate:asc',
+  'referenceNumber:asc',
+  'referenceNumber:desc',
+  'submittedAt:desc',
+  'submittedAt:asc',
+] as const;
+export const LeaveApplicationSortSchema = z.enum(LEAVE_APPLICATION_SORTS);
+export type LeaveApplicationSort = z.infer<typeof LeaveApplicationSortSchema>;
+
+/**
+ * GET /leave/applications?status=completed|inProgress&employeeId=&leaveTypeId=&from=&to=&reference=
+ * &sort=&page=&pageSize=. `from`/`to` keep the applications whose dates overlap the range
+ * (inclusive); `reference` matches part of the reference number (case-insensitive);
+ * `leaveTypeId` matches the leave type (a cancellation request has the type it cancels).
+ */
+export const LeaveApplicationsQuerySchema = z
+  .object({
+    status: LeaveHistoryFilterSchema.default('inProgress'),
+    employeeId: z.coerce.number().int().positive().optional(),
+    leaveTypeId: z.coerce.number().int().positive().optional(),
+    from: BusinessDateSchema.optional(),
+    to: BusinessDateSchema.optional(),
+    reference: SearchTextSchema,
+    sort: LeaveApplicationSortSchema.default('fromDate:desc'),
+    page: z.coerce.number().int().min(1).default(1),
+    pageSize: z.coerce.number().int().min(1).max(100).default(50),
+  })
+  .superRefine((value, ctx) => {
+    if (value.from && value.to && value.to < value.from) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['to'], message: 'To must be on or after From' });
+    }
+  });
 export type LeaveApplicationsQuery = z.infer<typeof LeaveApplicationsQuerySchema>;
 
 export const LeaveTypeRefSchema = z.object({
@@ -332,6 +366,8 @@ export type LeaveApplicationRow = z.infer<typeof LeaveApplicationRowSchema>;
 export const LeaveApplicationsResponseSchema = pageOf(LeaveApplicationRowSchema).extend({
   status: LeaveHistoryFilterSchema,
   employeeId: z.number().int(),
+  /** The sort that was applied. */
+  sort: LeaveApplicationSortSchema,
 });
 export type LeaveApplicationsResponse = z.infer<typeof LeaveApplicationsResponseSchema>;
 
@@ -422,7 +458,15 @@ export const LeaveBalanceCardSchema = z.object({
   actualAvailable: DecimalStringSchema.nullable(),
   /** Pending (submitted, not yet processed). */
   pending: DecimalStringSchema,
+  /** Same as `hideUnitsAvailableForESS` (kept for existing clients). */
   hideUnitsAvailable: z.boolean(),
+  /** The type's ESS flag: show the card without the Actual Available number. */
+  hideUnitsAvailableForESS: z.boolean(),
+  /**
+   * The type's ESS flag: hide the card when nothing is available. The API already leaves such a
+   * card out when Actual Available is 0, so a card that carries `true` has a non-zero balance.
+   */
+  hideZeroUnitsAvailableForESS: z.boolean(),
   unitLabel: z.literal(LEAVE_UNIT_LABEL),
 });
 export type LeaveBalanceCard = z.infer<typeof LeaveBalanceCardSchema>;
@@ -438,7 +482,15 @@ export type LeaveBalancesResponse = z.infer<typeof LeaveBalancesResponseSchema>;
 /**
  * A row of the balance-by-definition grid, with the exact section 1.7 columns: Leave Definition,
  * Entitlement, Balance Brought Forward, Accrued This Period, Taken This Period, Balance Carried
- * Forward, Planned, Pending, Leave Cycle End Date.
+ * Forward, Planned, Pending, Leave Cycle End Date. `adjustmentsThisPeriod` (and `actualAvailable`)
+ * are extra figures, so the row adds up on screen:
+ *
+ *   balanceCarriedForward = balanceBroughtForward + accruedThisPeriod − takenThisPeriod + adjustmentsThisPeriod
+ *   actualAvailable       = balanceCarriedForward − pending
+ *
+ * Every figure is exact to 4 dp (no rounding between columns), and the Total row is the column sum,
+ * so the same identities hold for it. See {@link LEAVE_BALANCE_GRID_COLUMNS} and
+ * {@link leaveBalanceRowReconciles}.
  */
 export const LeaveBalanceDefinitionRowSchema = z.object({
   /** Null on the Total row. */
@@ -447,8 +499,13 @@ export const LeaveBalanceDefinitionRowSchema = z.object({
   entitlement: DecimalStringSchema,
   balanceBroughtForward: DecimalStringSchema,
   accruedThisPeriod: DecimalStringSchema,
+  /** Positive: the units taken (the TAKEN ledger entries are negative). */
   takenThisPeriod: DecimalStringSchema,
-  /** Every other movement in the period (adjustments, reversals, carry forward, forfeits, credits). */
+  /**
+   * Extra column "Adjustments This Period" (signed): every other movement dated in the period, i.e.
+   * HR adjustments, cancellation reversals, carry forward in/out, forfeits, credits and opening
+   * balances.
+   */
   adjustmentsThisPeriod: DecimalStringSchema,
   /** CF = BF + accrued − taken + adjustments. */
   balanceCarriedForward: DecimalStringSchema,
@@ -462,6 +519,60 @@ export const LeaveBalanceDefinitionRowSchema = z.object({
 });
 export type LeaveBalanceDefinitionRow = z.infer<typeof LeaveBalanceDefinitionRowSchema>;
 
+export type LeaveBalanceGridColumnKey = Exclude<keyof LeaveBalanceDefinitionRow, 'entitlementId' | 'isTotal'>;
+
+/**
+ * The bucket grid's columns in display order: the section 1.7 columns (`extra: false`) with the
+ * extra "Adjustments This Period" column placed before Balance Carried Forward, where the sum
+ * reads left to right, and Actual Available at the end. A client that keeps strictly to section
+ * 1.7 drops the `extra` columns. `sign` shows how the figure enters CF.
+ */
+export const LEAVE_BALANCE_GRID_COLUMNS: readonly {
+  key: LeaveBalanceGridColumnKey;
+  label: string;
+  extra: boolean;
+  numeric: boolean;
+  sign: '+' | '−' | null;
+}[] = [
+  { key: 'leaveDefinition', label: 'Leave Definition', extra: false, numeric: false, sign: null },
+  { key: 'entitlement', label: 'Entitlement', extra: false, numeric: true, sign: null },
+  { key: 'balanceBroughtForward', label: 'Balance Brought Forward', extra: false, numeric: true, sign: '+' },
+  { key: 'accruedThisPeriod', label: 'Accrued This Period', extra: false, numeric: true, sign: '+' },
+  { key: 'takenThisPeriod', label: 'Taken This Period', extra: false, numeric: true, sign: '−' },
+  { key: 'adjustmentsThisPeriod', label: 'Adjustments This Period', extra: true, numeric: true, sign: '+' },
+  { key: 'balanceCarriedForward', label: 'Balance Carried Forward', extra: false, numeric: true, sign: null },
+  { key: 'planned', label: 'Planned', extra: false, numeric: true, sign: null },
+  { key: 'pending', label: 'Pending', extra: false, numeric: true, sign: null },
+  { key: 'leaveCycleEndDate', label: 'Leave Cycle End Date', extra: false, numeric: false, sign: null },
+  { key: 'actualAvailable', label: 'Actual Available', extra: true, numeric: true, sign: null },
+];
+
+/**
+ * True when a grid row (or the Total row) adds up: CF = BF + accrued − taken + adjustments and
+ * Actual Available = CF − Pending, exactly.
+ */
+export function leaveBalanceRowReconciles(
+  row: Pick<
+    LeaveBalanceDefinitionRow,
+    | 'balanceBroughtForward'
+    | 'accruedThisPeriod'
+    | 'takenThisPeriod'
+    | 'adjustmentsThisPeriod'
+    | 'balanceCarriedForward'
+    | 'pending'
+    | 'actualAvailable'
+  >,
+): boolean {
+  const cf = dec(row.balanceBroughtForward)
+    .plus(dec(row.accruedThisPeriod))
+    .minus(dec(row.takenThisPeriod))
+    .plus(dec(row.adjustmentsThisPeriod));
+  return (
+    cf.eq(dec(row.balanceCarriedForward)) &&
+    dec(row.balanceCarriedForward).minus(dec(row.pending)).eq(dec(row.actualAvailable))
+  );
+}
+
 /** GET /leave/balances/:leaveTypeId/definitions?employeeId=. */
 export const LeaveBalanceDefinitionsResponseSchema = z.object({
   employeeId: z.number().int(),
@@ -470,6 +581,8 @@ export const LeaveBalanceDefinitionsResponseSchema = z.object({
   title: z.string(),
   period: BalancePeriodSchema,
   hideUnitsAvailable: z.boolean(),
+  hideUnitsAvailableForESS: z.boolean(),
+  hideZeroUnitsAvailableForESS: z.boolean(),
   rows: z.array(LeaveBalanceDefinitionRowSchema),
   total: LeaveBalanceDefinitionRowSchema,
 });
@@ -544,6 +657,77 @@ export type CreditLeaveRow = z.infer<typeof CreditLeaveRowSchema>;
 /** GET /leave/in-lieu: requests about the acting-as employee and allocations the caller made. */
 export const CreditLeaveListResponseSchema = pageOf(CreditLeaveRowSchema);
 export type CreditLeaveListResponse = z.infer<typeof CreditLeaveListResponseSchema>;
+
+/**
+ * GET /leave/in-lieu/allocatable-employees?search=&page=&pageSize= (MANAGER, HR_ADMIN): the
+ * employees the signed-in user may allocate leave in lieu to. `search` matches the first name,
+ * last name, known-as name or employee code (case-insensitive). Paginated; never truncated.
+ */
+export const AllocatableEmployeesQuerySchema = z.object({
+  search: SearchTextSchema,
+  page: z.coerce.number().int().min(1).default(1),
+  pageSize: z.coerce.number().int().min(1).max(100).default(25),
+});
+export type AllocatableEmployeesQuery = z.infer<typeof AllocatableEmployeesQuerySchema>;
+
+/** Why the caller may allocate to the employee: a report within `workingAs.maxDepth`, or HR scope. */
+export const ALLOCATABLE_RELATIONS = ['REPORT', 'COMPANY'] as const;
+export const AllocatableRelationSchema = z.enum(ALLOCATABLE_RELATIONS);
+export type AllocatableRelation = z.infer<typeof AllocatableRelationSchema>;
+
+export const AllocatableEmployeeSchema = z.object({
+  employeeId: z.number().int(),
+  employeeCode: z.string(),
+  firstName: z.string(),
+  lastName: z.string(),
+  knownAs: z.string().nullable(),
+  /** "{First} {Last}". */
+  displayName: z.string(),
+  companyRuleId: z.number().int(),
+  /** The company rule's label, e.g. "Staff". */
+  companyRule: z.string(),
+  /** REPORT when the employee is one of the caller's reports (it wins over COMPANY). */
+  relation: AllocatableRelationSchema,
+});
+export type AllocatableEmployee = z.infer<typeof AllocatableEmployeeSchema>;
+
+export const AllocatableEmployeesResponseSchema = pageOf(AllocatableEmployeeSchema);
+export type AllocatableEmployeesResponse = z.infer<typeof AllocatableEmployeesResponseSchema>;
+
+// ───────────── Inbox subject data (LEAVE, CANCELLEAVE, CREDITLVEREQ, CREDITLVEALLOC) ─────────────
+
+/** `subject.data` of a leave application or a cancellation request in the inbox detail. */
+export const LeaveSubjectDataSchema = z.object({
+  applicationId: z.number().int(),
+  referenceNumber: z.string(),
+  leaveTypeId: z.number().int(),
+  leaveTypeCode: z.string(),
+  colour: z.string().nullable(),
+  fromDate: BusinessDateSchema,
+  toDate: BusinessDateSchema,
+  startPortion: DayPortionSchema,
+  endPortion: DayPortionSchema,
+  /** 4 dp. */
+  units: DecimalStringSchema,
+  /** "Days available" when it was submitted; null when it was not recorded. */
+  daysAvailable: DecimalStringSchema.nullable(),
+  noteSubmitted: z.boolean(),
+  isCancellation: z.boolean(),
+  cancelsApplicationId: z.number().int().nullable(),
+  cancelsReferenceNumber: z.string().nullable(),
+});
+export type LeaveSubjectData = z.infer<typeof LeaveSubjectDataSchema>;
+
+/** `subject.data` of a leave in lieu request or allocation in the inbox detail. */
+export const CreditLeaveSubjectDataSchema = z.object({
+  creditLeaveRequestId: z.number().int(),
+  referenceNumber: z.string(),
+  kind: CreditLeaveKindSchema,
+  leaveTypeId: z.number().int(),
+  /** 4 dp. */
+  units: DecimalStringSchema,
+});
+export type CreditLeaveSubjectData = z.infer<typeof CreditLeaveSubjectDataSchema>;
 
 // ───────────── Admin (HR_ADMIN) ─────────────
 

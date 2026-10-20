@@ -58,6 +58,10 @@ export class ProblemFilter implements ExceptionFilter {
     }
 
     const body: Record<string, unknown> = { ...problem };
+    if (exception instanceof DomainError && exception.extensions) {
+      // Extension members never replace the standard ones.
+      for (const [key, value] of Object.entries(exception.extensions)) if (!(key in body)) body[key] = value;
+    }
     if (exception instanceof ConflictError && exception.current !== undefined)
       body.current = exception.current;
 

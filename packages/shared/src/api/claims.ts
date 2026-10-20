@@ -13,7 +13,7 @@ import {
 } from '../enums';
 import { CLAIM_TIME_PATTERN } from '../claims';
 import { AttachmentIdsSchema, AttachmentSchema } from './attachments';
-import { BusinessDateSchema, DecimalStringSchema, pageOf, TimestampSchema } from './common';
+import { BusinessDateSchema, DecimalStringSchema, pageOf, ProblemSchema, TimestampSchema } from './common';
 import { ApprovalHistorySchema } from './workflow';
 
 // Contracts for Claims (sections 5.3 and 12.4): the Submit tiles, a group's setup (types, rates,
@@ -307,6 +307,16 @@ export const ClaimCapWarningSchema = z.object({
   /** This claim's lines of the type in the cycle. */
   requested: DecimalStringSchema,
   message: z.string(),
+  /**
+   * Index (in the claim's `lines`, 0-based) of the first line counted against the cap; a BLOCK
+   * error's path is `lines.{lineIndex}.amount` or `.quantity`. Null on warnings stored before
+   * this field existed.
+   */
+  lineIndex: z.number().int().nullable().default(null),
+  /** The saved line's id (null for an unsaved line or an older stored warning). */
+  lineId: z.number().int().nullable().default(null),
+  /** Every line of the claim counted against the cap in this cycle (indexes in `lines`). */
+  lineIndexes: z.array(z.number().int()).default([]),
 });
 export type ClaimCapWarning = z.infer<typeof ClaimCapWarningSchema>;
 
@@ -328,6 +338,11 @@ export const ClaimLineSchema = z.object({
   endTime: z.string().nullable(),
   /** Hours, kilometres or a count (4 dp); null for AMOUNT lines. */
   quantity: DecimalStringSchema.nullable(),
+  /**
+   * Display form of `quantity` without trailing zeros ("2.5" for "2.5000"); null for AMOUNT lines.
+   * Send `quantity` (4 dp) back when saving; this is for display only.
+   */
+  quantityDisplay: z.string().nullable(),
   /** 4 dp; null for AMOUNT lines. */
   rate: DecimalStringSchema.nullable(),
   /** 2 dp, computed by the server. */
@@ -394,6 +409,11 @@ export const ClaimDetailSchema = ClaimRowSchema.extend({
   canEdit: z.boolean(),
   /** Null for a draft (no workflow yet). */
   approvalHistory: ApprovalHistorySchema.nullable(),
+  /**
+   * The workflow process's `version`: send it with the workflow actions on this claim (resubmit,
+   * withdraw), without reading the inbox first. Null for a draft.
+   */
+  processVersion: z.number().int().nullable(),
 });
 export type ClaimDetail = z.infer<typeof ClaimDetailSchema>;
 
@@ -810,3 +830,13 @@ export const CLAIM_PROBLEM_TYPES = {
   /** The group cannot be claimed by this employee (no eligible type or no workflow). */
   notEligible: 'urn:peoplehub:problem:claim-not-eligible',
 } as const;
+
+/**
+ * The 422 body of a submit (or resubmit) that a BLOCK cap stops (type `capExceeded`): the usual
+ * `errors` (`lines.{i}.amount` / `.quantity`) plus the full findings, each with its
+ * `lineIndex` and `lineId`.
+ */
+export const ClaimCapProblemSchema = ProblemSchema.extend({
+  findings: z.array(ClaimCapWarningSchema),
+});
+export type ClaimCapProblem = z.infer<typeof ClaimCapProblemSchema>;

@@ -1,5 +1,10 @@
 import { Injectable } from '@nestjs/common';
-import { WORKFLOW_REQUEST_LABELS, WORKFLOW_TYPES, type WorkflowTypeCode } from '@peoplehub/shared';
+import {
+  type SubjectDetail,
+  WORKFLOW_REQUEST_LABELS,
+  WORKFLOW_TYPES,
+  type WorkflowTypeCode,
+} from '@peoplehub/shared';
 import type { Tx } from '../../prisma/prisma-client';
 import type {
   FinalApprovalResult,
@@ -7,6 +12,33 @@ import type {
   WorkflowProcessSnapshot,
   WorkflowSubjectHandler,
 } from './workflow-subject';
+
+/**
+ * The inbox detail's `subject` from a handler's description: the shared fields plus `kind`
+ * (GENERIC when the handler did not set one) and the matching `data`.
+ */
+export function toSubjectDetail(description: SubjectDescription): SubjectDetail {
+  const base = {
+    title: description.title,
+    requestLabel: description.requestLabel,
+    headline: description.headline,
+    fields: description.fields,
+  };
+  switch (description.kind) {
+    case 'LEAVE':
+      return { ...base, kind: description.kind, data: description.data };
+    case 'CREDIT_LEAVE':
+      return { ...base, kind: description.kind, data: description.data };
+    case 'CLAIM':
+      return { ...base, kind: description.kind, data: description.data };
+    case 'CHANGE_REQUEST':
+      return { ...base, kind: description.kind, data: description.data };
+    case 'EMPLOYEE_TRANSACTION':
+      return { ...base, kind: description.kind, data: description.data };
+    default:
+      return { ...base, kind: 'GENERIC', data: description.data };
+  }
+}
 
 /**
  * Used for a type that has no handler yet (for example TRAINING, which has no screens in v1):
@@ -25,6 +57,7 @@ export class GenericSubjectHandler implements WorkflowSubjectHandler {
       unitsLine: null,
       headline: [],
       fields: [{ label: 'Summary', value: process.summary }],
+      kind: 'GENERIC',
       data: {},
       viewLabel: `View ${label.toLowerCase()} request`,
     };

@@ -5,6 +5,9 @@ import {
   businessFromDate,
   canTransitionReview,
   combineParticipantTotals,
+  CONTRACT_REVIEW_EXPORT_COLUMNS,
+  CONTRACT_REVIEW_SORT_FIELDS,
+  type ContractReviewsExportQuery,
   type ContractReviewRow,
   type ContractReviewsQuery,
   type ContractReviewsResponse,
@@ -16,6 +19,7 @@ import {
   isRatingOnScale,
   isReviewEditable,
   itemScore,
+  PERFORMANCE_EXPORT_MAX_ROWS,
   participantWeights,
   type RatingScalePoint,
   ratingLabel,
@@ -52,6 +56,7 @@ import { ScopeService } from '../auth/scope.service';
 import { PARAMETER_ACTIVE } from '../details/lookup.service';
 import { PerformanceAccess } from './performance-access';
 import { REVIEW_ENTITY, scalePoints, sectionTotalsOf, toRatingScaleDto } from './performance-common';
+import { type ExportFile, gridExport, sortMap } from './performance-export';
 import { ReviewNotifier } from './review-notifier.service';
 
 const ROW_INCLUDE = {
@@ -99,24 +104,27 @@ const REVIEW_SORTS: Record<ReviewsQuery['sort'], Prisma.ReviewOrderByWithRelatio
   'employee:desc': [{ employee: { lastName: 'desc' } }, { employee: { firstName: 'desc' } }, { id: 'desc' }],
 };
 
-const CONTRACT_REVIEW_SORTS: Record<ContractReviewsQuery['sort'], Prisma.ReviewOrderByWithRelationInput[]> = {
-  'employeeSurname:asc': [
-    { employee: { lastName: 'asc' } },
-    { employee: { firstName: 'asc' } },
-    { id: 'asc' },
-  ],
-  'employeeSurname:desc': [
-    { employee: { lastName: 'desc' } },
-    { employee: { firstName: 'desc' } },
-    { id: 'desc' },
-  ],
-  'reviewName:asc': [{ name: 'asc' }, { id: 'asc' }],
-  'reviewName:desc': [{ name: 'desc' }, { id: 'desc' }],
-  'reviewCycleStartDate:desc': [{ cycleStartDate: 'desc' }, { id: 'desc' }],
-  'reviewCycleStartDate:asc': [{ cycleStartDate: 'asc' }, { id: 'asc' }],
-  'reviewTotalActual:desc': [{ totalActual: { sort: 'desc', nulls: 'last' } }, { id: 'desc' }],
-  'reviewTotalActual:asc': [{ totalActual: { sort: 'asc', nulls: 'last' } }, { id: 'asc' }],
-};
+type ReviewOrder = Prisma.ReviewOrderByWithRelationInput;
+
+/** Category and type sort by their code (the descriptions are looked up per row). */
+const CONTRACT_REVIEW_SORTS: Record<ContractReviewsQuery['sort'], ReviewOrder[]> = sortMap<
+  (typeof CONTRACT_REVIEW_SORT_FIELDS)[number],
+  ReviewOrder
+>({
+  employeeSurname: (d) => [{ employee: { lastName: d } }, { employee: { firstName: d } }, { id: d }],
+  employeeName: (d) => [{ employee: { firstName: d } }, { employee: { lastName: d } }, { id: d }],
+  employeeCompany: (d) => [{ employee: { company: { name: d } } }, { id: d }],
+  employeeCompanyRule: (d) => [{ employee: { companyRule: { description: d } } }, { id: d }],
+  employeePosition: (d) => [{ employee: { jobTitle: { sort: d, nulls: 'last' } } }, { id: d }],
+  contractName: (d) => [{ contract: { name: d } }, { id: d }],
+  reviewName: (d) => [{ name: d }, { id: d }],
+  reviewCategory: (d) => [{ category: d }, { id: d }],
+  reviewType: (d) => [{ type: d }, { id: d }],
+  reviewCycleStartDate: (d) => [{ cycleStartDate: d }, { id: d }],
+  reviewCycleEndDate: (d) => [{ cycleEndDate: d }, { id: d }],
+  reviewStatus: (d) => [{ status: d }, { id: d }],
+  reviewTotalActual: (d) => [{ totalActual: { sort: d, nulls: 'last' } }, { id: d }],
+});
 
 interface Descriptions {
   categories: Map<string, string>;
@@ -182,7 +190,14 @@ export class ReviewService {
     const [rows, total, descriptions] = await Promise.all([
       this.db.prisma.review.findMany({
         where,
-        include: ROW_INCLUDE,
+        include: {
+          ...ROW_INCLUDE,
+          // Only the caller's own reviewer rows: enough for the row's canEdit / allowedStatuses.
+          participants: {
+            where: { userId: ctx.userId, role: 'REVIEWER', deletedAt: null },
+            select: { id: true },
+          },
+        },
         orderBy: REVIEW_SORTS[query.sort],
         skip: (query.page - 1) * query.pageSize,
         take: query.pageSize,
@@ -191,11 +206,50 @@ export class ReviewService {
       this.descriptions(this.db.prisma),
     ]);
     return {
-      items: rows.map((r) => this.toRow(r, descriptions)),
+      items: rows.map((r) =>
+        this.toRow(r, descriptions, this.rowActors(ctx, r.employee, r.participants.length > 0)),
+      ),
       total,
       page: query.page,
       pageSize: query.pageSize,
     };
+  }
+
+  /**
+   * The caller's actor roles on a list row, without a query per row: HR in scope, the reviewee,
+   * and a reviewer (from the caller's own participant rows).
+   */
+  private rowActors(
+    ctx: SecurityContext,
+    employee: { id: number; companyId: number } | null,
+    isReviewer: boolean,
+  ): ReviewActor[] {
+    const actors: ReviewActor[] = [];
+    if (this.access.isHrFor(ctx, employee)) actors.push('HR_ADMIN');
+    if (this.access.isSelf(ctx, employee?.id ?? null)) actors.push('REVIEWEE');
+    if (isReviewer) actors.push('REVIEWER');
+    return actors;
+  }
+
+  /** GET /performance/contract-reviews/export: the filtered grid as CSV or Excel, audited. */
+  async exportContractReviews(ctx: SecurityContext, query: ContractReviewsExportQuery): Promise<ExportFile> {
+    const { format, ...filters } = query;
+    const page = await this.contractReviews(ctx, {
+      ...filters,
+      page: 1,
+      pageSize: PERFORMANCE_EXPORT_MAX_ROWS,
+    });
+    await this.audit.recordStandalone(ctx, {
+      category: 'EXPORT',
+      action: 'EXPORT.CONTRACT_REVIEWS',
+      entityType: 'Review',
+      metadata: { filters, format, rows: page.items.length, truncated: page.total > page.items.length },
+    });
+    return gridExport(page.items, CONTRACT_REVIEW_EXPORT_COLUMNS, {
+      format,
+      sheet: 'Reviews',
+      fileBase: 'contract-reviews',
+    });
   }
 
   /** GET /performance/contract-reviews: the Reviews grid with the Filter Selection modal. */
@@ -851,7 +905,7 @@ export class ReviewService {
     };
   }
 
-  private toRow(r: ReviewRowData, d: Descriptions): ReviewRow {
+  private toRow(r: ReviewRowData, d: Descriptions, actors: ReviewActor[]): ReviewRow {
     return {
       id: r.id,
       name: r.name,
@@ -878,6 +932,8 @@ export class ReviewService {
       createdAt: r.createdAt.toISOString(),
       updatedAt: r.updatedAt.toISOString(),
       version: r.version,
+      canEdit: isReviewEditable(r.status) && actors.includes('HR_ADMIN'),
+      allowedStatuses: allowedReviewTransitions(r.status, actors),
     };
   }
 
@@ -897,7 +953,7 @@ export class ReviewService {
     for (const s of review.scores) if (s.submittedAt) submittedBy.set(s.reviewerUserId, s.submittedAt);
     const items = [...targets.values()].map((t) => t.item);
     return {
-      ...this.toRow(review, d),
+      ...this.toRow(review, d, roles.actors),
       ratingScale: review.ratingScale ? toRatingScaleDto(review.ratingScale) : null,
       objectives: review.objectives.map((o) => ({
         id: o.id,

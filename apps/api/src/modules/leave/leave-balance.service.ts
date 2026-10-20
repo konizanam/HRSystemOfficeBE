@@ -109,6 +109,8 @@ export class LeaveBalanceService {
         actualAvailable: t.hideUnitsAvailableForESS ? null : units4(available),
         pending: units4(pending),
         hideUnitsAvailable: t.hideUnitsAvailableForESS,
+        hideUnitsAvailableForESS: t.hideUnitsAvailableForESS,
+        hideZeroUnitsAvailableForESS: t.hideZeroUnitsAvailableForESS,
         unitLabel: LEAVE_UNIT_LABEL,
       });
     }
@@ -117,7 +119,9 @@ export class LeaveBalanceService {
 
   /**
    * GET /leave/balances/:leaveTypeId/definitions: one row per bucket (open buckets, and buckets
-   * closed during the period) with the section 1.7 columns, plus a Total row.
+   * closed during the period) with the section 1.7 columns plus Adjustments This Period, and a
+   * Total row (the column sums). Each row adds up: CF = BF + accrued − taken + adjustments, and
+   * Actual Available = CF − Pending (`leaveBalanceRowReconciles`).
    */
   async definitions(
     ctx: SecurityContext,
@@ -210,6 +214,8 @@ export class LeaveBalanceService {
       title: `${type.description}, Period Ending: ${period.periodEnding}`,
       period,
       hideUnitsAvailable: type.hideUnitsAvailableForESS,
+      hideUnitsAvailableForESS: type.hideUnitsAvailableForESS,
+      hideZeroUnitsAvailableForESS: type.hideZeroUnitsAvailableForESS,
       rows,
       total,
     };

@@ -2,6 +2,8 @@ import { Injectable } from '@nestjs/common';
 import type { CreditLeaveRequest, Prisma } from '@prisma/client';
 import {
   addDays,
+  type AllocatableEmployeesQuery,
+  type AllocatableEmployeesResponse,
   businessFromDate,
   CREDIT_LEAVE_KIND_LABELS,
   type CreateCreditLeaveRequest,
@@ -21,7 +23,7 @@ import {
   units4,
 } from '@peoplehub/shared';
 import { AuditService } from '../../audit/audit.service';
-import { isActingForOther, type SecurityContext } from '../../common/context/security-context';
+import { hasRole, isActingForOther, type SecurityContext } from '../../common/context/security-context';
 import { type FieldError, NotFoundError, ValidationError } from '../../common/errors/domain-errors';
 import { DbService } from '../../prisma/db.service';
 import type { Tx } from '../../prisma/prisma-client';
@@ -201,6 +203,87 @@ export class CreditLeaveService {
     return { items, total, page: query.page, pageSize: query.pageSize };
   }
 
+  /**
+   * GET /leave/in-lieu/allocatable-employees: who the signed-in user may allocate leave in lieu to
+   * (the ALLOCATION rule of {@link create}): a manager's reports within `workingAs.maxDepth` and
+   * an HR admin's companies; active employees whose company rule has a leave in lieu policy; never
+   * the caller. Sorted by surname, first name; paginated, never truncated.
+   */
+  async allocatableEmployees(
+    ctx: SecurityContext,
+    query: AllocatableEmployeesQuery,
+  ): Promise<AllocatableEmployeesResponse> {
+    const prisma = this.db.prisma;
+    const empty = { items: [], total: 0, page: query.page, pageSize: query.pageSize };
+    const reportIds =
+      hasRole(ctx, 'MANAGER') && ctx.selfEmployeeId !== null
+        ? await this.scope.reportIdsWithinDepth(ctx.selfEmployeeId)
+        : [];
+    const scopes: Prisma.EmployeeWhereInput[] = [];
+    if (reportIds.length > 0) scopes.push({ id: { in: reportIds } });
+    if (hasRole(ctx, 'HR_ADMIN') && ctx.companyIds.length > 0) {
+      scopes.push({ companyId: { in: ctx.companyIds } });
+    }
+    if (scopes.length === 0) return empty;
+    const and: Prisma.EmployeeWhereInput[] = [{ OR: scopes }, { deletedAt: null, status: 'ACTIVE' }];
+    if (ctx.selfEmployeeId !== null) and.push({ id: { not: ctx.selfEmployeeId } });
+    if (query.search) {
+      const contains = { contains: query.search, mode: 'insensitive' as const };
+      and.push({
+        OR: [
+          { firstName: contains },
+          { lastName: contains },
+          { knownAs: contains },
+          { employeeCode: contains },
+        ],
+      });
+    }
+    // Only company rules with a leave in lieu policy (anything else would answer 422 on create).
+    const rules = await prisma.employee.groupBy({ by: ['companyRuleId'], where: { AND: and } });
+    const allowedRules: number[] = [];
+    for (const { companyRuleId } of rules) {
+      const policies = await this.policies.applicable(companyRuleId);
+      if (policies.some((p) => p.leaveType.isCreditLeave)) allowedRules.push(companyRuleId);
+    }
+    if (allowedRules.length === 0) return empty;
+    const where: Prisma.EmployeeWhereInput = { AND: [...and, { companyRuleId: { in: allowedRules } }] };
+    const [rows, total] = await Promise.all([
+      prisma.employee.findMany({
+        where,
+        select: {
+          id: true,
+          employeeCode: true,
+          firstName: true,
+          lastName: true,
+          knownAs: true,
+          companyRuleId: true,
+          companyRule: { select: { description: true } },
+        },
+        orderBy: [{ lastName: 'asc' }, { firstName: 'asc' }, { id: 'asc' }],
+        skip: (query.page - 1) * query.pageSize,
+        take: query.pageSize,
+      }),
+      prisma.employee.count({ where }),
+    ]);
+    const reports = new Set(reportIds);
+    return {
+      items: rows.map((e) => ({
+        employeeId: e.id,
+        employeeCode: e.employeeCode,
+        firstName: e.firstName,
+        lastName: e.lastName,
+        knownAs: e.knownAs,
+        displayName: `${e.firstName} ${e.lastName}`,
+        companyRuleId: e.companyRuleId,
+        companyRule: e.companyRule.description,
+        relation: reports.has(e.id) ? ('REPORT' as const) : ('COMPANY' as const),
+      })),
+      total,
+      page: query.page,
+      pageSize: query.pageSize,
+    };
+  }
+
   private async row(client: Tx, id: number): Promise<CreditLeaveRow> {
     return this.toRow(
       client,
@@ -256,6 +339,7 @@ export class CreditLeaveService {
         { label: 'Date submitted', value: r.submittedAt ? formatTimestampDate(r.submittedAt) : '' },
         { label: 'Reference number', value: r.referenceNumber },
       ],
+      kind: 'CREDIT_LEAVE',
       data: {
         creditLeaveRequestId: r.id,
         referenceNumber: r.referenceNumber,

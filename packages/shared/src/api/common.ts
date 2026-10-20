@@ -35,6 +35,14 @@ export function pageOf<T extends z.ZodTypeAny>(item: T) {
     pageSize: z.number().int(),
   });
 }
+/** `contains` search text of a list (trimmed; blank = no filter). */
+export const SearchTextSchema = z
+  .string()
+  .trim()
+  .max(100)
+  .optional()
+  .transform((v) => (v ? v : undefined));
+
 export interface Page<T> {
   items: T[];
   total: number;
@@ -55,6 +63,20 @@ export const ProblemSchema = z.object({
   requestId: z.string().optional(),
 });
 export type Problem = z.infer<typeof ProblemSchema>;
+
+/**
+ * Problem `type` values shared by every module, so a client can tell the 409s apart:
+ * `versionConflict` = the record changed since it was read (reload and retry);
+ * `idempotencyInProgress` = a replay of an `Idempotency-Key` whose first request has not finished
+ * (wait and send the same request again; the record did not change).
+ */
+export const COMMON_PROBLEM_TYPES = {
+  versionConflict: 'urn:peoplehub:problem:version-conflict',
+  idempotencyInProgress: 'urn:peoplehub:problem:idempotency-in-progress',
+} as const;
+
+/** Title of the 409 answered while the first request with an `Idempotency-Key` is still running. */
+export const IDEMPOTENCY_IN_PROGRESS_TITLE = 'Request is still being processed';
 
 export const IDEMPOTENCY_HEADER = 'idempotency-key';
 export const CSRF_HEADER = 'x-csrf-token';

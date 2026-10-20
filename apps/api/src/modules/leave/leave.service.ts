@@ -13,6 +13,7 @@ import {
   LEAVE_UNIT_LABEL,
   type LeaveApplicationDetail,
   type LeaveApplicationRow,
+  type LeaveApplicationSort,
   type LeaveApplicationsQuery,
   type LeaveApplicationsResponse,
   type LeaveCalculateRequest,
@@ -73,6 +74,18 @@ const DETAIL_INCLUDE = {
     },
   },
 } satisfies Prisma.LeaveApplicationInclude;
+
+/** The history grids' sorts (`?sort=`); ties go to the newest application. */
+const HISTORY_ORDER: Record<LeaveApplicationSort, Prisma.LeaveApplicationOrderByWithRelationInput[]> = {
+  'fromDate:desc': [{ fromDate: 'desc' }, { id: 'desc' }],
+  'fromDate:asc': [{ fromDate: 'asc' }, { id: 'desc' }],
+  'toDate:desc': [{ toDate: 'desc' }, { id: 'desc' }],
+  'toDate:asc': [{ toDate: 'asc' }, { id: 'desc' }],
+  'referenceNumber:asc': [{ referenceNumber: 'asc' }],
+  'referenceNumber:desc': [{ referenceNumber: 'desc' }],
+  'submittedAt:desc': [{ submittedAt: { sort: 'desc', nulls: 'last' } }, { id: 'desc' }],
+  'submittedAt:asc': [{ submittedAt: { sort: 'asc', nulls: 'last' } }, { id: 'desc' }],
+};
 
 /** Long-running bursts of submits queue for a connection rather than fail (see ASSUMPTIONS). */
 const SUBMIT_TX = { maxWaitMs: 60_000, timeoutMs: 60_000 };
@@ -339,19 +352,27 @@ export class LeaveService {
 
   // ───────────── History and detail ─────────────
 
-  /** GET /leave/applications?status=completed|inProgress (section 5.2.3), From Date newest first. */
+  /**
+   * GET /leave/applications?status=completed|inProgress (section 5.2.3): filtered by leave type,
+   * a date range (overlapping applications) and part of the reference number, sorted on the
+   * server (From Date newest first by default), paginated.
+   */
   async list(ctx: SecurityContext, query: LeaveApplicationsQuery): Promise<LeaveApplicationsResponse> {
     const employeeId = query.employeeId ?? ctx.actingAsEmployeeId;
     await assertCanReadLeave(this.scope, ctx, employeeId);
     const where: Prisma.LeaveApplicationWhereInput = {
       employeeId,
       status: { in: LEAVE_HISTORY_STATUSES[query.status] },
+      ...(query.leaveTypeId !== undefined ? { leaveTypeId: query.leaveTypeId } : {}),
+      ...(query.from ? { toDate: { gte: dateFromBusiness(query.from) } } : {}),
+      ...(query.to ? { fromDate: { lte: dateFromBusiness(query.to) } } : {}),
+      ...(query.reference ? { referenceNumber: { contains: query.reference, mode: 'insensitive' } } : {}),
     };
     const [apps, total] = await Promise.all([
       this.db.prisma.leaveApplication.findMany({
         where,
         include: APPLICATION_ROW_INCLUDE,
-        orderBy: [{ fromDate: 'desc' }, { id: 'desc' }],
+        orderBy: HISTORY_ORDER[query.sort],
         skip: (query.page - 1) * query.pageSize,
         take: query.pageSize,
       }),
@@ -364,6 +385,7 @@ export class LeaveService {
       pageSize: query.pageSize,
       status: query.status,
       employeeId,
+      sort: query.sort,
     };
   }
 

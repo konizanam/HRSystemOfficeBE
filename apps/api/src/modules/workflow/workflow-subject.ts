@@ -2,6 +2,8 @@ import type {
   BusinessDate,
   InboxWarning,
   ProcessStatus,
+  SubjectDataByKind,
+  SubjectDataKind,
   SubjectField,
   WorkflowTypeCode,
 } from '@peoplehub/shared';
@@ -23,10 +25,24 @@ export interface WorkflowProcessSnapshot {
 }
 
 /**
+ * `kind` and `data` of a subject description: a typed kind with its shared data schema
+ * (packages/shared/src/api/subjects.ts), or GENERIC (the default when `kind` is left out) with
+ * an open object.
+ */
+export type SubjectData =
+  | { [K in Exclude<SubjectDataKind, 'GENERIC'>]: { kind: K; data: SubjectDataByKind[K] } }[Exclude<
+      SubjectDataKind,
+      'GENERIC'
+    >]
+  | { kind?: 'GENERIC'; data: Record<string, unknown> };
+
+/**
  * What the inbox shows about the subject of a process (cards and the detail panel). Each
  * workflow type describes its own subject: a leave application, a claim, a change request, …
  */
-export interface SubjectDescription {
+export type SubjectDescription = SubjectDescriptionBase & SubjectData;
+
+export interface SubjectDescriptionBase {
   /** The noun in "This {label} Request" and "New {label} Request", e.g. "Annual Leave". */
   requestLabel: string;
   /** Detail panel heading, e.g. "Leave request". */
@@ -40,8 +56,6 @@ export interface SubjectDescription {
   headline: SubjectField[];
   /** The field list in display order. */
   fields: SubjectField[];
-  /** Type-specific data for richer UIs. */
-  data: Record<string, unknown>;
   /** Card link text, e.g. "View leave request". */
   viewLabel: string;
   /**

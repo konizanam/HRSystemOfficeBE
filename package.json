@@ -1,0 +1,41 @@
+{
+  "name": "peoplehub",
+  "private": true,
+  "packageManager": "pnpm@10.34.7",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "turbo run build",
+    "dev": "turbo run dev --parallel",
+    "lint": "turbo run lint",
+    "typecheck": "turbo run typecheck",
+    "test": "turbo run test",
+    "test:int": "pnpm --filter @peoplehub/api test:int",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "db:migrate": "pnpm --filter @peoplehub/api db:migrate",
+    "db:deploy": "pnpm --filter @peoplehub/api db:deploy",
+    "db:seed": "pnpm --filter @peoplehub/api db:seed",
+    "audit:verify": "pnpm --filter @peoplehub/api audit:verify",
+    "keys:rotate": "pnpm --filter @peoplehub/api keys:rotate"
+  },
+  "devDependencies": {
+    "@eslint/js": "9.39.5",
+    "eslint": "9.39.5",
+    "prettier": "3.9.10",
+    "turbo": "2.11.9",
+    "typescript": "5.9.3",
+    "typescript-eslint": "8.72.0"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "@prisma/client",
+      "@prisma/engines",
+      "prisma",
+      "argon2",
+      "@swc/core",
+      "esbuild"
+    ]
+  }
+}

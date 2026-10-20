@@ -1,0 +1,1466 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ───────────── Enums ─────────────
+enum Role {
+  EMPLOYEE
+  MANAGER
+  HR_ADMIN
+  PAYROLL_ADMIN
+  SYSTEM_ADMIN
+  AUDITOR
+}
+
+enum AuthProvider {
+  LOCAL
+  OAUTH
+}
+
+enum EmployeeStatus {
+  ACTIVE
+  SUSPENDED
+  TERMINATED
+}
+
+enum AddressType {
+  PHYSICAL
+  POSTAL
+  WORK
+}
+
+enum PostalServiceType {
+  PO_BOX
+  PRIVATE_BAG
+  POSTNET_SUITE
+  STREET
+  OTHER
+}
+
+enum ContactType {
+  CELL
+  EMAIL
+  FAX
+  HOME
+  WORK
+}
+
+enum BankAccountType {
+  CURRENT
+  LOAN
+  TRANSMISSION
+  SAVINGS
+}
+
+enum AccountHolderRelationship {
+  OWN
+  JOINT
+  THIRD_PARTY
+}
+
+enum DayPortion {
+  FULL
+  AM
+  PM
+}
+
+enum LeaveUnit {
+  DAYS
+  HOURS
+}
+
+enum AccrualMethod {
+  MONTHLY_PRO_RATA
+  UPFRONT
+  NONE
+}
+
+enum LedgerEntryType {
+  OPENING
+  ACCRUAL
+  TAKEN
+  CANCELLATION_REVERSAL
+  ADJUSTMENT
+  CARRY_FORWARD_IN
+  CARRY_FORWARD_OUT
+  FORFEIT
+  CREDIT_ALLOCATION
+  PAYOUT
+}
+
+enum ProcessStatus {
+  DRAFT
+  IN_PROGRESS
+  RESUBMIT_REQUIRED
+  APPROVED_PENDING_PROCESS
+  PROCESSED
+  DECLINED
+  CANCELLED
+  CONFLICT
+}
+
+enum StepStatus {
+  PENDING
+  PARKED
+  APPROVED
+  DECLINED
+  SKIPPED
+  REASSIGNED
+  SENT_BACK
+  CANCELLED
+}
+
+enum ApproverResolution {
+  REPORTS_TO
+  REPORTS_TO_LEVEL_2
+  SPECIFIC_USER
+  ROLE
+}
+
+enum WorkflowActionType {
+  CREATE
+  SUBMIT
+  APPROVE
+  DECLINE
+  REASSIGN
+  DELEGATE
+  PARK
+  UNPARK
+  SEND_BACK
+  RESUBMIT
+  WITHDRAW
+  CANCEL
+  ESCALATE
+  COMMENT
+  AUTO_SKIP
+  PROCESS
+  APPLY
+  CONFLICT
+}
+
+enum CreditLeaveKind {
+  REQUEST
+  ALLOCATION
+}
+
+enum ClaimInputMode {
+  AMOUNT
+  QUANTITY
+  HOURS
+  KILOMETRES
+}
+
+enum CapMode {
+  NO_CAP
+  WARN
+  BLOCK
+}
+
+enum CapCycle {
+  PAY_PERIOD
+  MONTHLY
+  ANNUAL
+}
+
+enum PayslipLineCategory {
+  EARNING
+  DEDUCTION
+  COMPANY_CONTRIBUTION
+  FRINGE_BENEFIT
+  INFO
+}
+
+enum ChangeOperation {
+  CREATE
+  UPDATE
+  DELETE
+}
+
+enum OutOfOfficeMode {
+  OFF
+  WHILE_ON_LEAVE
+  DATE_RANGE
+}
+
+enum TemplateStatus {
+  DRAFT
+  ACTIVE
+  ARCHIVED
+}
+
+enum TemplateItemKind {
+  KPA
+  KPI
+  COMPETENCY
+  OBJECTIVE
+}
+
+enum InitiationStatus {
+  QUEUED
+  RUNNING
+  COMPLETED
+  FAILED
+}
+
+enum ContractStatus {
+  DRAFT
+  AGREED
+  ACTIVE
+  CLOSED
+  ARCHIVED
+}
+
+enum ReviewNotifyMode {
+  IMMEDIATELY
+  NEVER
+  SPECIFIC_DATE
+}
+
+enum ReviewStatus {
+  DRAFT
+  OPEN
+  SELF_ASSESSMENT
+  REVIEWER_ASSESSMENT
+  MODERATION
+  COMPLETED
+  CANCELLED
+}
+
+enum ParticipantRole {
+  REVIEWEE
+  REVIEWER
+}
+
+enum AuditCategory {
+  AUTH
+  SECURITY
+  DATA_CHANGE
+  WORKFLOW
+  DATA_VIEW
+  EXPORT
+  SYSTEM
+}
+
+enum AuditOutcome {
+  SUCCESS
+  DENIED
+  FAILURE
+}
+
+// ───────────── Organisation ─────────────
+model Company {
+  id               Int             @id @default(autoincrement())
+  code             String          @unique
+  name             String
+  currency         String          @default("NAD")
+  country          String          @default("NA")
+  logoAttachmentId String?
+  createdAt        DateTime        @default(now()) @db.Timestamptz(6)
+  updatedAt        DateTime        @updatedAt @db.Timestamptz(6)
+  rules            CompanyRule[]
+  employees        Employee[]
+  publicHolidays   PublicHoliday[]
+}
+
+model CompanyRule {
+  id                  Int                  @id @default(autoincrement())
+  companyId           Int
+  code                String
+  description         String
+  company             Company              @relation(fields: [companyId], references: [id])
+  employees           Employee[]
+  payPeriods          PayPeriod[]
+  workflowDefinitions WorkflowDefinition[]
+  leavePolicies       LeavePolicy[]
+  claimCaps           ClaimCap[]
+
+  @@unique([companyId, code])
+}
+
+model PublicHoliday {
+  id        Int      @id @default(autoincrement())
+  companyId Int?
+  date      DateTime @db.Date
+  name      String
+  company   Company? @relation(fields: [companyId], references: [id])
+
+  @@unique([companyId, date])
+  @@index([date])
+}
+
+// ───────────── People & identity ─────────────
+model Employee {
+  id                        Int            @id @default(autoincrement())
+  entityCode                String         @unique
+  employeeCode              String         @unique
+  companyId                 Int
+  companyRuleId             Int
+  title                     String?
+  initials                  String?
+  firstName                 String
+  secondName                String?
+  otherNames                String?
+  lastName                  String
+  knownAs                   String?
+  maidenName                String?
+  identityType              String?
+  identityNumberEnc         String?
+  identityNumberLast4       String?
+  dateOfBirth               DateTime?      @db.Date
+  countryOfBirth            String?
+  cityOfBirth               String?
+  birthCertificateNumberEnc String?
+  passportNumberEnc         String?
+  passportCountry           String?
+  taxNumberEnc              String?
+  taxNumberLast4            String?
+  nationality               String?
+  homeLanguage              String?
+  gender                    String?
+  maritalStatus             String?
+  bloodGroup                String?
+  religion                  String?
+  correspondenceAddressType AddressType?
+  jobTitle                  String?
+  jobGrade                  String?
+  department                String?
+  hourlyRate                Decimal?       @db.Decimal(14, 4)
+  workPattern               Json?
+  dateEngaged               DateTime?      @db.Date
+  terminationDate           DateTime?      @db.Date
+  status                    EmployeeStatus @default(ACTIVE)
+  birthdayVisible           Boolean        @default(true)
+  photoAttachmentId         String?
+  reportsToId               Int?
+  version                   Int            @default(1)
+  createdAt                 DateTime       @default(now()) @db.Timestamptz(6)
+  updatedAt                 DateTime       @updatedAt @db.Timestamptz(6)
+  deletedAt                 DateTime?      @db.Timestamptz(6)
+
+  company              Company                    @relation(fields: [companyId], references: [id])
+  companyRule          CompanyRule                @relation(fields: [companyRuleId], references: [id])
+  reportsTo            Employee?                  @relation("ReportsTo", fields: [reportsToId], references: [id])
+  directReports        Employee[]                 @relation("ReportsTo")
+  user                 User?
+  addresses            Address[]
+  contacts             ContactDetail[]
+  bankAccounts         BankAccount[]
+  driversLicences      DriversLicence[]
+  familyMembers        FamilyMember[]
+  fundMemberships      FundMembership[]
+  leaveEntitlements    EmployeeLeaveEntitlement[]
+  leaveLedger          LeaveLedgerEntry[]
+  leaveApplications    LeaveApplication[]
+  creditLeaveRequests  CreditLeaveRequest[]
+  claims               Claim[]
+  claimAdjustments     ClaimBalanceAdjustment[]
+  payslips             Payslip[]
+  taxCertificates      TaxCertificate[]
+  changeRequests       ChangeRequest[]
+  employeeTransactions EmployeeTransaction[]
+  processesAsSubject   WorkflowProcess[]          @relation("ProcessSubject")
+  freeTextApplied      FreeTextRequest[]          @relation("FreeTextApplicant")
+  freeTextAbout        FreeTextRequest[]          @relation("FreeTextSubject")
+  performanceContracts PerformanceContract[]
+  reviewParticipations ReviewParticipant[]
+
+  @@index([companyId, companyRuleId])
+  @@index([reportsToId])
+  @@index([lastName, firstName])
+}
+
+model User {
+  id                 String       @id @default(uuid())
+  username           String       @unique
+  email              String?      @unique
+  passwordHash       String?
+  authProvider       AuthProvider @default(LOCAL)
+  externalSubject    String?      @unique
+  roles              Role[]
+  employeeId         Int?         @unique
+  isActive           Boolean      @default(true)
+  mustChangePassword Boolean      @default(false)
+  failedLoginCount   Int          @default(0)
+  lockedUntil        DateTime?    @db.Timestamptz(6)
+  lastLoginAt        DateTime?    @db.Timestamptz(6)
+  passwordChangedAt  DateTime?    @db.Timestamptz(6)
+  mfaSecretEnc       String?
+  version            Int          @default(1)
+  createdAt          DateTime     @default(now()) @db.Timestamptz(6)
+  updatedAt          DateTime     @updatedAt @db.Timestamptz(6)
+
+  employee           Employee?              @relation(fields: [employeeId], references: [id])
+  sessions           Session[]
+  passwordHistory    PasswordHistory[]
+  passwordResets     PasswordResetToken[]
+  outOfOffice        OutOfOffice?           @relation("OOOOwner")
+  oooMainNominee     OutOfOffice[]          @relation("OOOMainNominee")
+  oooRuleNominee     OutOfOfficeRule[]      @relation("OOORuleNominee")
+  stepDefinitions    WorkflowStep[]         @relation("StepDefinitionUser")
+  assignedSteps      WorkflowStepInstance[] @relation("StepAssignee")
+  actedSteps         WorkflowStepInstance[] @relation("StepActor")
+  workflowActions    WorkflowAction[]       @relation("ActionActor")
+  submittedProcesses WorkflowProcess[]      @relation("ProcessSubmitter")
+  attachments        Attachment[]
+  notifications      Notification[]
+  dashboardLayout    DashboardLayout?
+}
+
+model Session {
+  id                 String    @id @default(uuid())
+  userId             String
+  csrfToken          String
+  actingAsEmployeeId Int?
+  ip                 String?
+  userAgent          String?
+  createdAt          DateTime  @default(now()) @db.Timestamptz(6)
+  lastActivityAt     DateTime  @default(now()) @db.Timestamptz(6)
+  expiresAt          DateTime  @db.Timestamptz(6)
+  revokedAt          DateTime? @db.Timestamptz(6)
+  user               User      @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+}
+
+model PasswordHistory {
+  id        Int      @id @default(autoincrement())
+  userId    String
+  hash      String
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+  user      User     @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+}
+
+model PasswordResetToken {
+  id        String    @id @default(uuid())
+  userId    String
+  tokenHash String    @unique
+  expiresAt DateTime  @db.Timestamptz(6)
+  usedAt    DateTime? @db.Timestamptz(6)
+  createdAt DateTime  @default(now()) @db.Timestamptz(6)
+  user      User      @relation(fields: [userId], references: [id])
+}
+
+// ───────────── Personal details ─────────────
+model Address {
+  id                  Int                @id @default(autoincrement())
+  employeeId          Int?
+  familyMemberId      Int?
+  type                AddressType
+  sameAs              AddressType?
+  unitNumber          String?
+  block               String?
+  complex             String?
+  levelFloor          String?
+  streetNumber        String?
+  streetName          String?
+  suburb              String?
+  city                String?
+  postalCode          String?
+  country             String?
+  province            String?
+  district            String?
+  careOfName          String?
+  serviceType         PostalServiceType?
+  postalAddressNumber String?
+  version             Int                @default(1)
+  updatedAt           DateTime           @updatedAt @db.Timestamptz(6)
+  employee            Employee?          @relation(fields: [employeeId], references: [id])
+  familyMember        FamilyMember?      @relation(fields: [familyMemberId], references: [id])
+
+  @@unique([employeeId, type])
+  @@unique([familyMemberId, type])
+}
+
+model ContactDetail {
+  id             Int           @id @default(autoincrement())
+  employeeId     Int?
+  familyMemberId Int?
+  type           ContactType
+  value          String
+  isPrimary      Boolean       @default(false)
+  employee       Employee?     @relation(fields: [employeeId], references: [id])
+  familyMember   FamilyMember? @relation(fields: [familyMemberId], references: [id])
+
+  @@index([employeeId])
+}
+
+model Bank {
+  id                  Int           @id @default(autoincrement())
+  name                String        @unique
+  universalBranchCode String?
+  country             String?
+  isActive            Boolean       @default(true)
+  branches            BankBranch[]
+  accounts            BankAccount[]
+}
+
+model BankBranch {
+  id       Int           @id @default(autoincrement())
+  bankId   Int
+  name     String
+  code     String?
+  isActive Boolean       @default(true)
+  bank     Bank          @relation(fields: [bankId], references: [id])
+  accounts BankAccount[]
+
+  @@unique([bankId, name])
+}
+
+model BankAccount {
+  id                 Int                       @id @default(autoincrement())
+  employeeId         Int
+  accountType        BankAccountType
+  holderName         String
+  holderRelationship AccountHolderRelationship
+  bankId             Int
+  branchId           Int?
+  accountNumberEnc   String
+  accountNumberLast4 String
+  currency           String                    @default("NAD")
+  isActive           Boolean                   @default(true)
+  effectiveFrom      DateTime                  @db.Date
+  effectiveTo        DateTime?                 @db.Date
+  version            Int                       @default(1)
+  createdAt          DateTime                  @default(now()) @db.Timestamptz(6)
+  updatedAt          DateTime                  @updatedAt @db.Timestamptz(6)
+  employee           Employee                  @relation(fields: [employeeId], references: [id])
+  bank               Bank                      @relation(fields: [bankId], references: [id])
+  branch             BankBranch?               @relation(fields: [branchId], references: [id])
+
+  @@index([employeeId, isActive])
+}
+
+model DriversLicence {
+  id               Int       @id @default(autoincrement())
+  employeeId       Int
+  licenceNumberEnc String
+  licenceLast4     String
+  code             String
+  issueDate        DateTime? @db.Date
+  expiryDate       DateTime  @db.Date
+  countryOfIssue   String?
+  restrictions     String?
+  hasPdp           Boolean   @default(false)
+  pdpExpiryDate    DateTime? @db.Date
+  version          Int       @default(1)
+  deletedAt        DateTime? @db.Timestamptz(6)
+  updatedAt        DateTime  @updatedAt @db.Timestamptz(6)
+  employee         Employee  @relation(fields: [employeeId], references: [id])
+
+  @@index([expiryDate])
+}
+
+model FamilyMember {
+  id                  Int             @id @default(autoincrement())
+  employeeId          Int
+  relationship        String
+  title               String?
+  initials            String?
+  firstName           String
+  secondName          String?
+  otherNames          String?
+  lastName            String
+  knownAs             String?
+  identityNumberEnc   String?
+  identityNumberLast4 String?
+  gender              String?
+  dateOfBirth         DateTime?       @db.Date
+  nationality         String?
+  isEmergencyContact  Boolean         @default(false)
+  emergencyDetail     String?
+  version             Int             @default(1)
+  deletedAt           DateTime?       @db.Timestamptz(6)
+  updatedAt           DateTime        @updatedAt @db.Timestamptz(6)
+  employee            Employee        @relation(fields: [employeeId], references: [id])
+  addresses           Address[]
+  contacts            ContactDetail[]
+  beneficiaryOf       Beneficiary[]
+}
+
+model RetirementFund {
+  id          Int              @id @default(autoincrement())
+  code        String           @unique
+  name        String
+  isActive    Boolean          @default(true)
+  memberships FundMembership[]
+}
+
+model FundMembership {
+  id            Int            @id @default(autoincrement())
+  employeeId    Int
+  fundId        Int
+  memberNumber  String?
+  startDate     DateTime?      @db.Date
+  version       Int            @default(1)
+  employee      Employee       @relation(fields: [employeeId], references: [id])
+  fund          RetirementFund @relation(fields: [fundId], references: [id])
+  beneficiaries Beneficiary[]
+
+  @@unique([employeeId, fundId])
+}
+
+model Beneficiary {
+  id                Int            @id @default(autoincrement())
+  membershipId      Int
+  familyMemberId    Int?
+  name              String
+  relationship      String
+  identityNumberEnc String?
+  percentage        Decimal        @db.Decimal(5, 2)
+  membership        FundMembership @relation(fields: [membershipId], references: [id])
+  familyMember      FamilyMember?  @relation(fields: [familyMemberId], references: [id])
+}
+
+model ChangeRequest {
+  id              Int              @id @default(autoincrement())
+  referenceNumber String           @unique
+  employeeId      Int
+  entityType      String
+  entityId        String?
+  operation       ChangeOperation
+  proposed        Json
+  before          Json?
+  baseVersion     Int?
+  status          ProcessStatus    @default(DRAFT)
+  processId       Int?             @unique
+  appliedAt       DateTime?        @db.Timestamptz(6)
+  createdAt       DateTime         @default(now()) @db.Timestamptz(6)
+  updatedAt       DateTime         @updatedAt @db.Timestamptz(6)
+  version         Int              @default(1)
+  employee        Employee         @relation(fields: [employeeId], references: [id])
+  process         WorkflowProcess? @relation(fields: [processId], references: [id])
+
+  @@index([employeeId, entityType, status])
+}
+
+// ───────────── Workflow ─────────────
+model WorkflowType {
+  id          Int                  @id @default(autoincrement())
+  code        String               @unique
+  description String
+  isActive    Boolean              @default(true)
+  definitions WorkflowDefinition[]
+  processes   WorkflowProcess[]
+  oooRules    OutOfOfficeRule[]
+}
+
+model WorkflowDefinition {
+  id             Int               @id @default(autoincrement())
+  workflowTypeId Int
+  companyRuleId  Int?
+  discriminator  String?
+  name           String
+  versionNo      Int               @default(1)
+  isActive       Boolean           @default(true)
+  allowReassign  Boolean           @default(true)
+  allowResubmit  Boolean           @default(true)
+  canPark        Boolean           @default(true)
+  createdAt      DateTime          @default(now()) @db.Timestamptz(6)
+  workflowType   WorkflowType      @relation(fields: [workflowTypeId], references: [id])
+  companyRule    CompanyRule?      @relation(fields: [companyRuleId], references: [id])
+  steps          WorkflowStep[]
+  processes      WorkflowProcess[]
+}
+
+model WorkflowStep {
+  id                 Int                    @id @default(autoincrement())
+  definitionId       Int
+  stepNo             Int
+  name               String
+  resolution         ApproverResolution
+  approverUserId     String?
+  approverRole       Role?
+  isMandatory        Boolean                @default(true)
+  skipIfSameApprover Boolean                @default(true)
+  escalationHours    Int?
+  definition         WorkflowDefinition     @relation(fields: [definitionId], references: [id])
+  approverUser       User?                  @relation("StepDefinitionUser", fields: [approverUserId], references: [id])
+  instances          WorkflowStepInstance[]
+
+  @@unique([definitionId, stepNo])
+}
+
+model WorkflowProcess {
+  id                  Int                    @id @default(autoincrement())
+  workflowTypeId      Int
+  definitionId        Int
+  subjectEmployeeId   Int
+  submittedByUserId   String
+  submittedOnBehalf   Boolean                @default(false)
+  subjectEntity       String
+  subjectEntityId     String
+  summary             String
+  status              ProcessStatus          @default(DRAFT)
+  currentStepNo       Int?
+  round               Int                    @default(1)
+  isEscalated         Boolean                @default(false)
+  submittedAt         DateTime?              @db.Timestamptz(6)
+  finalApprovedAt     DateTime?              @db.Timestamptz(6)
+  processedAt         DateTime?              @db.Timestamptz(6)
+  completedAt         DateTime?              @db.Timestamptz(6)
+  version             Int                    @default(1)
+  createdAt           DateTime               @default(now()) @db.Timestamptz(6)
+  updatedAt           DateTime               @updatedAt @db.Timestamptz(6)
+  workflowType        WorkflowType           @relation(fields: [workflowTypeId], references: [id])
+  definition          WorkflowDefinition     @relation(fields: [definitionId], references: [id])
+  subjectEmployee     Employee               @relation("ProcessSubject", fields: [subjectEmployeeId], references: [id])
+  submittedBy         User                   @relation("ProcessSubmitter", fields: [submittedByUserId], references: [id])
+  stepInstances       WorkflowStepInstance[]
+  actions             WorkflowAction[]
+  leaveApplication    LeaveApplication?
+  creditLeaveRequest  CreditLeaveRequest?
+  claim               Claim?
+  changeRequest       ChangeRequest?
+  freeTextRequest     FreeTextRequest?
+  employeeTransaction EmployeeTransaction?
+
+  @@index([status, workflowTypeId])
+  @@index([subjectEmployeeId, status])
+}
+
+model WorkflowStepInstance {
+  id                  Int              @id @default(autoincrement())
+  processId           Int
+  stepId              Int
+  stepNo              Int
+  round               Int              @default(1)
+  assigneeUserId      String
+  delegatedFromUserId String?
+  status              StepStatus       @default(PENDING)
+  isMandatory         Boolean
+  dueAt               DateTime?        @db.Timestamptz(6)
+  parkedUntil         DateTime?        @db.Timestamptz(6)
+  actedAt             DateTime?        @db.Timestamptz(6)
+  actedByUserId       String?
+  comment             String?
+  createdAt           DateTime         @default(now()) @db.Timestamptz(6)
+  process             WorkflowProcess  @relation(fields: [processId], references: [id])
+  step                WorkflowStep     @relation(fields: [stepId], references: [id])
+  assignee            User             @relation("StepAssignee", fields: [assigneeUserId], references: [id])
+  actedBy             User?            @relation("StepActor", fields: [actedByUserId], references: [id])
+  actions             WorkflowAction[]
+
+  @@index([assigneeUserId, status])
+  @@index([processId, round, stepNo])
+}
+
+model WorkflowAction {
+  id                   Int                   @id @default(autoincrement())
+  processId            Int
+  stepInstanceId       Int?
+  action               WorkflowActionType
+  actorUserId          String
+  onBehalfOfEmployeeId Int?
+  comment              String?
+  fromStatus           ProcessStatus?
+  toStatus             ProcessStatus?
+  metadata             Json?
+  createdAt            DateTime              @default(now()) @db.Timestamptz(6)
+  process              WorkflowProcess       @relation(fields: [processId], references: [id])
+  stepInstance         WorkflowStepInstance? @relation(fields: [stepInstanceId], references: [id])
+  actor                User                  @relation("ActionActor", fields: [actorUserId], references: [id])
+
+  @@index([processId, createdAt])
+}
+
+model OutOfOffice {
+  id                String            @id @default(uuid())
+  userId            String            @unique
+  mode              OutOfOfficeMode   @default(OFF)
+  fromDate          DateTime?         @db.Date
+  toDate            DateTime?         @db.Date
+  mainNomineeUserId String?
+  version           Int               @default(1)
+  updatedAt         DateTime          @updatedAt @db.Timestamptz(6)
+  user              User              @relation("OOOOwner", fields: [userId], references: [id])
+  mainNominee       User?             @relation("OOOMainNominee", fields: [mainNomineeUserId], references: [id])
+  rules             OutOfOfficeRule[]
+}
+
+model OutOfOfficeRule {
+  id             Int          @id @default(autoincrement())
+  outOfOfficeId  String
+  workflowTypeId Int
+  nomineeUserId  String
+  outOfOffice    OutOfOffice  @relation(fields: [outOfOfficeId], references: [id])
+  workflowType   WorkflowType @relation(fields: [workflowTypeId], references: [id])
+  nominee        User         @relation("OOORuleNominee", fields: [nomineeUserId], references: [id])
+
+  @@unique([outOfOfficeId, workflowTypeId])
+}
+
+model OutboxEvent {
+  id          BigInt    @id @default(autoincrement())
+  type        String
+  payload     Json
+  createdAt   DateTime  @default(now()) @db.Timestamptz(6)
+  publishedAt DateTime? @db.Timestamptz(6)
+
+  @@index([publishedAt])
+}
+
+// ───────────── Leave ─────────────
+model LeaveType {
+  id                           Int                        @id
+  code                         String                     @unique
+  description                  String
+  colour                       String?
+  unit                         LeaveUnit                  @default(DAYS)
+  isPaid                       Boolean                    @default(true)
+  mandatoryReason              Boolean                    @default(false)
+  requiresAttachmentAfterDays  Decimal?                   @db.Decimal(12, 4)
+  allowHalfDay                 Boolean                    @default(true)
+  allowNegative                Boolean                    @default(false)
+  excludeWeekends              Boolean                    @default(true)
+  excludePublicHolidays        Boolean                    @default(true)
+  hideUnitsAvailableForESS     Boolean                    @default(false)
+  hideZeroUnitsAvailableForESS Boolean                    @default(false)
+  isCreditLeave                Boolean                    @default(false)
+  isActive                     Boolean                    @default(true)
+  reasons                      LeaveReason[]
+  policies                     LeavePolicy[]
+  entitlements                 EmployeeLeaveEntitlement[]
+  ledger                       LeaveLedgerEntry[]
+  applications                 LeaveApplication[]
+  creditLeaveRequests          CreditLeaveRequest[]
+}
+
+model LeaveReason {
+  id           Int                @id @default(autoincrement())
+  leaveTypeId  Int
+  code         String
+  description  String
+  isActive     Boolean            @default(true)
+  leaveType    LeaveType          @relation(fields: [leaveTypeId], references: [id])
+  applications LeaveApplication[]
+
+  @@unique([leaveTypeId, code])
+}
+
+model LeavePolicy {
+  id                       Int                        @id @default(autoincrement())
+  leaveTypeId              Int
+  companyRuleId            Int?
+  definitionName           String
+  entitlementPerCycle      Decimal                    @db.Decimal(12, 4)
+  accrualMethod            AccrualMethod
+  cycleMonths              Int                        @default(12)
+  maxCarryForward          Decimal?                   @db.Decimal(12, 4)
+  carryForwardExpiryMonths Int?
+  maxNegative              Decimal                    @default(0) @db.Decimal(12, 4)
+  creditExpiryDays         Int?
+  isActive                 Boolean                    @default(true)
+  leaveType                LeaveType                  @relation(fields: [leaveTypeId], references: [id])
+  companyRule              CompanyRule?               @relation(fields: [companyRuleId], references: [id])
+  entitlements             EmployeeLeaveEntitlement[]
+}
+
+model EmployeeLeaveEntitlement {
+  id             Int                          @id @default(autoincrement())
+  employeeId     Int
+  leaveTypeId    Int
+  policyId       Int?
+  definitionName String
+  entitlement    Decimal                      @db.Decimal(12, 4)
+  cycleStartDate DateTime                     @db.Date
+  cycleEndDate   DateTime                     @db.Date
+  expiresOn      DateTime?                    @db.Date
+  isClosed       Boolean                      @default(false)
+  employee       Employee                     @relation(fields: [employeeId], references: [id])
+  leaveType      LeaveType                    @relation(fields: [leaveTypeId], references: [id])
+  policy         LeavePolicy?                 @relation(fields: [policyId], references: [id])
+  ledger         LeaveLedgerEntry[]
+  allocations    LeaveApplicationAllocation[]
+
+  @@index([employeeId, leaveTypeId, cycleEndDate])
+}
+
+model LeaveLedgerEntry {
+  id                 Int                      @id @default(autoincrement())
+  employeeId         Int
+  leaveTypeId        Int
+  entitlementId      Int
+  entryType          LedgerEntryType
+  units              Decimal                  @db.Decimal(12, 4)
+  effectiveDate      DateTime                 @db.Date
+  payPeriodId        Int?
+  leaveApplicationId Int?
+  note               String?
+  createdByUserId    String?
+  createdAt          DateTime                 @default(now()) @db.Timestamptz(6)
+  employee           Employee                 @relation(fields: [employeeId], references: [id])
+  leaveType          LeaveType                @relation(fields: [leaveTypeId], references: [id])
+  entitlement        EmployeeLeaveEntitlement @relation(fields: [entitlementId], references: [id])
+  payPeriod          PayPeriod?               @relation(fields: [payPeriodId], references: [id])
+  leaveApplication   LeaveApplication?        @relation(fields: [leaveApplicationId], references: [id])
+
+  @@unique([entitlementId, entryType, effectiveDate, leaveApplicationId])
+  @@index([employeeId, leaveTypeId, effectiveDate])
+}
+
+model LeaveApplication {
+  id                   Int                          @id @default(autoincrement())
+  referenceNumber      String                       @unique
+  employeeId           Int
+  leaveTypeId          Int
+  leaveReasonId        Int?
+  fromDate             DateTime                     @db.Date
+  toDate               DateTime                     @db.Date
+  startPortion         DayPortion                   @default(FULL)
+  endPortion           DayPortion                   @default(FULL)
+  unitsTaken           Decimal                      @db.Decimal(12, 4)
+  unitsOverridden      Boolean                      @default(false)
+  overrideReason       String?
+  noteSubmitted        Boolean                      @default(false)
+  noteReceived         Boolean                      @default(false)
+  takeOnTransaction    Boolean                      @default(false)
+  comment              String?
+  status               ProcessStatus                @default(DRAFT)
+  processId            Int?                         @unique
+  cancelsApplicationId Int?                         @unique
+  payPeriodId          Int?
+  submittedAt          DateTime?                    @db.Timestamptz(6)
+  approvedAt           DateTime?                    @db.Timestamptz(6)
+  finalApproverUserId  String?
+  processedAt          DateTime?                    @db.Timestamptz(6)
+  version              Int                          @default(1)
+  createdAt            DateTime                     @default(now()) @db.Timestamptz(6)
+  updatedAt            DateTime                     @updatedAt @db.Timestamptz(6)
+  employee             Employee                     @relation(fields: [employeeId], references: [id])
+  leaveType            LeaveType                    @relation(fields: [leaveTypeId], references: [id])
+  leaveReason          LeaveReason?                 @relation(fields: [leaveReasonId], references: [id])
+  process              WorkflowProcess?             @relation(fields: [processId], references: [id])
+  payPeriod            PayPeriod?                   @relation(fields: [payPeriodId], references: [id])
+  cancels              LeaveApplication?            @relation("LeaveCancellation", fields: [cancelsApplicationId], references: [id])
+  cancellation         LeaveApplication?            @relation("LeaveCancellation")
+  days                 LeaveApplicationDay[]
+  allocations          LeaveApplicationAllocation[]
+  ledgerEntries        LeaveLedgerEntry[]
+
+  @@index([employeeId, fromDate, toDate])
+  @@index([status])
+}
+
+model LeaveApplicationDay {
+  id            Int              @id @default(autoincrement())
+  applicationId Int
+  date          DateTime         @db.Date
+  portion       DayPortion
+  units         Decimal          @db.Decimal(12, 4)
+  application   LeaveApplication @relation(fields: [applicationId], references: [id])
+
+  @@unique([applicationId, date])
+}
+
+model LeaveApplicationAllocation {
+  id            Int                      @id @default(autoincrement())
+  applicationId Int
+  entitlementId Int
+  units         Decimal                  @db.Decimal(12, 4)
+  application   LeaveApplication         @relation(fields: [applicationId], references: [id])
+  entitlement   EmployeeLeaveEntitlement @relation(fields: [entitlementId], references: [id])
+}
+
+model CreditLeaveRequest {
+  id              Int              @id @default(autoincrement())
+  referenceNumber String           @unique
+  kind            CreditLeaveKind
+  employeeId      Int
+  leaveTypeId     Int
+  workedFrom      DateTime         @db.Date
+  workedTo        DateTime         @db.Date
+  units           Decimal          @db.Decimal(12, 4)
+  reason          String
+  status          ProcessStatus    @default(DRAFT)
+  processId       Int?             @unique
+  version         Int              @default(1)
+  createdAt       DateTime         @default(now()) @db.Timestamptz(6)
+  employee        Employee         @relation(fields: [employeeId], references: [id])
+  leaveType       LeaveType        @relation(fields: [leaveTypeId], references: [id])
+  process         WorkflowProcess? @relation(fields: [processId], references: [id])
+}
+
+// ───────────── Claims ─────────────
+model ClaimGroup {
+  id                  Int         @id
+  code                String      @unique
+  description         String
+  attachmentMandatory Boolean     @default(false)
+  isActive            Boolean     @default(true)
+  claimTypes          ClaimType[]
+  claims              Claim[]
+}
+
+model ClaimType {
+  id                 Int                      @id
+  groupId            Int
+  code               String
+  description        String
+  inputMode          ClaimInputMode
+  rate               Decimal?                 @db.Decimal(14, 4)
+  rateMultiplier     Decimal?                 @db.Decimal(6, 4)
+  payrollCode        String?
+  requiresAttachment Boolean                  @default(false)
+  isActive           Boolean                  @default(true)
+  group              ClaimGroup               @relation(fields: [groupId], references: [id])
+  caps               ClaimCap[]
+  lines              ClaimLine[]
+  adjustments        ClaimBalanceAdjustment[]
+
+  @@unique([groupId, code])
+}
+
+model ClaimCap {
+  id            Int          @id @default(autoincrement())
+  claimTypeId   Int
+  companyRuleId Int?
+  cycle         CapCycle
+  mode          CapMode      @default(NO_CAP)
+  amountLimit   Decimal?     @db.Decimal(14, 2)
+  quantityLimit Decimal?     @db.Decimal(12, 4)
+  proRata       Boolean      @default(false)
+  claimType     ClaimType    @relation(fields: [claimTypeId], references: [id])
+  companyRule   CompanyRule? @relation(fields: [companyRuleId], references: [id])
+}
+
+model Claim {
+  id              Int              @id @default(autoincrement())
+  referenceNumber String           @unique
+  employeeId      Int
+  groupId         Int
+  description     String?
+  totalAmount     Decimal          @default(0) @db.Decimal(14, 2)
+  warnings        Json?
+  status          ProcessStatus    @default(DRAFT)
+  processId       Int?             @unique
+  payPeriodId     Int?
+  submittedAt     DateTime?        @db.Timestamptz(6)
+  processedAt     DateTime?        @db.Timestamptz(6)
+  version         Int              @default(1)
+  createdAt       DateTime         @default(now()) @db.Timestamptz(6)
+  updatedAt       DateTime         @updatedAt @db.Timestamptz(6)
+  employee        Employee         @relation(fields: [employeeId], references: [id])
+  group           ClaimGroup       @relation(fields: [groupId], references: [id])
+  process         WorkflowProcess? @relation(fields: [processId], references: [id])
+  payPeriod       PayPeriod?       @relation(fields: [payPeriodId], references: [id])
+  lines           ClaimLine[]
+
+  @@index([employeeId, status])
+}
+
+model ClaimLine {
+  id          Int       @id @default(autoincrement())
+  claimId     Int
+  claimTypeId Int
+  date        DateTime  @db.Date
+  startTime   String?
+  endTime     String?
+  quantity    Decimal?  @db.Decimal(12, 4)
+  rate        Decimal?  @db.Decimal(14, 4)
+  amount      Decimal   @db.Decimal(14, 2)
+  description String?
+  sortOrder   Int       @default(0)
+  claim       Claim     @relation(fields: [claimId], references: [id])
+  claimType   ClaimType @relation(fields: [claimTypeId], references: [id])
+}
+
+model ClaimBalanceAdjustment {
+  id              Int       @id @default(autoincrement())
+  employeeId      Int
+  claimTypeId     Int
+  cycleStartDate  DateTime  @db.Date
+  amount          Decimal   @default(0) @db.Decimal(14, 2)
+  quantity        Decimal   @default(0) @db.Decimal(12, 4)
+  reason          String
+  createdByUserId String
+  createdAt       DateTime  @default(now()) @db.Timestamptz(6)
+  employee        Employee  @relation(fields: [employeeId], references: [id])
+  claimType       ClaimType @relation(fields: [claimTypeId], references: [id])
+}
+
+// ───────────── Payroll outputs ─────────────
+model PayPeriod {
+  id                   Int                   @id @default(autoincrement())
+  companyRuleId        Int
+  description          String
+  startDate            DateTime              @db.Date
+  endDate              DateTime              @db.Date
+  payDate              DateTime?             @db.Date
+  isClosed             Boolean               @default(false)
+  companyRule          CompanyRule           @relation(fields: [companyRuleId], references: [id])
+  payslips             Payslip[]
+  leaveApplications    LeaveApplication[]
+  ledgerEntries        LeaveLedgerEntry[]
+  claims               Claim[]
+  employeeTransactions EmployeeTransaction[]
+
+  @@unique([companyRuleId, startDate])
+}
+
+model Payslip {
+  id              Int           @id @default(autoincrement())
+  employeeId      Int
+  payPeriodId     Int
+  payRun          String
+  runType         String        @default("Normal")
+  ruleLabel       String?
+  currency        String        @default("NAD")
+  grossPay        Decimal       @db.Decimal(14, 2)
+  totalDeductions Decimal       @db.Decimal(14, 2)
+  netPay          Decimal       @db.Decimal(14, 2)
+  pdfAttachmentId String?
+  pdfSha256       String?
+  publishedAt     DateTime      @default(now()) @db.Timestamptz(6)
+  employee        Employee      @relation(fields: [employeeId], references: [id])
+  payPeriod       PayPeriod     @relation(fields: [payPeriodId], references: [id])
+  lines           PayslipLine[]
+
+  @@unique([employeeId, payPeriodId, payRun])
+}
+
+model PayslipLine {
+  id          Int                 @id @default(autoincrement())
+  payslipId   Int
+  category    PayslipLineCategory
+  code        String
+  description String
+  quantity    Decimal?            @db.Decimal(12, 4)
+  rate        Decimal?            @db.Decimal(14, 4)
+  amount      Decimal             @db.Decimal(14, 2)
+  ytdAmount   Decimal?            @db.Decimal(14, 2)
+  sortOrder   Int                 @default(0)
+  payslip     Payslip             @relation(fields: [payslipId], references: [id])
+}
+
+model TaxCertificate {
+  id              Int      @id @default(autoincrement())
+  employeeId      Int
+  taxYear         Int
+  certificateType String
+  pdfAttachmentId String
+  pdfSha256       String
+  issuedAt        DateTime @default(now()) @db.Timestamptz(6)
+  employee        Employee @relation(fields: [employeeId], references: [id])
+
+  @@unique([employeeId, taxYear, certificateType])
+}
+
+model EmployeeTransaction {
+  id          Int              @id @default(autoincrement())
+  employeeId  Int
+  code        String
+  description String
+  amount      Decimal?         @db.Decimal(14, 2)
+  quantity    Decimal?         @db.Decimal(12, 4)
+  payPeriodId Int?
+  isRecurring Boolean          @default(false)
+  status      ProcessStatus    @default(PROCESSED)
+  processId   Int?             @unique
+  createdAt   DateTime         @default(now()) @db.Timestamptz(6)
+  employee    Employee         @relation(fields: [employeeId], references: [id])
+  payPeriod   PayPeriod?       @relation(fields: [payPeriodId], references: [id])
+  process     WorkflowProcess? @relation(fields: [processId], references: [id])
+}
+
+// ───────────── Free text ─────────────
+model FreeTextType {
+  id                      Int               @id @default(autoincrement())
+  code                    String            @unique
+  description             String
+  requiresSubjectEmployee Boolean           @default(false)
+  isActive                Boolean           @default(true)
+  requests                FreeTextRequest[]
+}
+
+model FreeTextRequest {
+  id              Int              @id @default(autoincrement())
+  referenceNumber String           @unique
+  typeId          Int
+  applicantId     Int
+  aboutEmployeeId Int?
+  body            String
+  status          ProcessStatus    @default(DRAFT)
+  processId       Int?             @unique
+  version         Int              @default(1)
+  createdAt       DateTime         @default(now()) @db.Timestamptz(6)
+  type            FreeTextType     @relation(fields: [typeId], references: [id])
+  applicant       Employee         @relation("FreeTextApplicant", fields: [applicantId], references: [id])
+  aboutEmployee   Employee?        @relation("FreeTextSubject", fields: [aboutEmployeeId], references: [id])
+  process         WorkflowProcess? @relation(fields: [processId], references: [id])
+}
+
+// ───────────── Performance ─────────────
+model ParameterValue {
+  id          Int              @id @default(autoincrement())
+  tableName   String
+  code        String
+  description String
+  parentId    Int?
+  status      String           @default("A")
+  sortOrder   Int              @default(0)
+  parent      ParameterValue?  @relation("ParamParent", fields: [parentId], references: [id])
+  children    ParameterValue[] @relation("ParamParent")
+
+  @@unique([tableName, code])
+}
+
+model RatingScale {
+  id        Int                   @id @default(autoincrement())
+  name      String                @unique
+  points    Json
+  templates PerformanceTemplate[]
+}
+
+model PerformanceTemplate {
+  id                    Int                       @id @default(autoincrement())
+  name                  String
+  contractStartDate     DateTime                  @db.Date
+  contractEndDate       DateTime                  @db.Date
+  ratingScaleId         Int?
+  processDefinition     String?
+  ownerUserId           String
+  createdFromTemplateId Int?
+  status                TemplateStatus            @default(DRAFT)
+  version               Int                       @default(1)
+  createdAt             DateTime                  @default(now()) @db.Timestamptz(6)
+  ratingScale           RatingScale?              @relation(fields: [ratingScaleId], references: [id])
+  createdFrom           PerformanceTemplate?      @relation("TemplateCopy", fields: [createdFromTemplateId], references: [id])
+  copies                PerformanceTemplate[]     @relation("TemplateCopy")
+  items                 PerformanceTemplateItem[]
+  initiations           ContractInitiation[]
+  contracts             PerformanceContract[]
+}
+
+model PerformanceTemplateItem {
+  id               Int                 @id @default(autoincrement())
+  templateId       Int
+  kind             TemplateItemKind
+  parameterValueId Int?
+  title            String
+  weight           Decimal             @db.Decimal(6, 2)
+  target           String?
+  sortOrder        Int                 @default(0)
+  template         PerformanceTemplate @relation(fields: [templateId], references: [id])
+}
+
+model ContractInitiation {
+  id                Int                   @id @default(autoincrement())
+  name              String
+  templateId        Int
+  contractStartDate DateTime              @db.Date
+  contractEndDate   DateTime              @db.Date
+  filters           Json
+  status            InitiationStatus      @default(QUEUED)
+  contractCount     Int                   @default(0)
+  createdCount      Int                   @default(0)
+  failedCount       Int                   @default(0)
+  errors            Json?
+  createdByUserId   String
+  createdAt         DateTime              @default(now()) @db.Timestamptz(6)
+  updatedAt         DateTime              @updatedAt @db.Timestamptz(6)
+  template          PerformanceTemplate   @relation(fields: [templateId], references: [id])
+  contracts         PerformanceContract[]
+}
+
+model PerformanceContract {
+  id                      Int                       @id @default(autoincrement())
+  employeeId              Int
+  templateId              Int
+  initiationId            Int?
+  name                    String
+  contractType            String?
+  startDate               DateTime                  @db.Date
+  endDate                 DateTime                  @db.Date
+  status                  ContractStatus            @default(DRAFT)
+  currentlyAssignedUserId String?
+  archivedAt              DateTime?                 @db.Timestamptz(6)
+  version                 Int                       @default(1)
+  employee                Employee                  @relation(fields: [employeeId], references: [id])
+  template                PerformanceTemplate       @relation(fields: [templateId], references: [id])
+  initiation              ContractInitiation?       @relation(fields: [initiationId], references: [id])
+  items                   PerformanceContractItem[]
+  reviews                 Review[]
+}
+
+model PerformanceContractItem {
+  id         Int                 @id @default(autoincrement())
+  contractId Int
+  kind       TemplateItemKind
+  title      String
+  weight     Decimal             @db.Decimal(6, 2)
+  target     String?
+  sortOrder  Int                 @default(0)
+  contract   PerformanceContract @relation(fields: [contractId], references: [id])
+  scores     ReviewScore[]
+}
+
+model Review {
+  id              Int                  @id @default(autoincrement())
+  contractId      Int?
+  name            String
+  category        String
+  type            String
+  cycleStartDate  DateTime             @db.Date
+  cycleEndDate    DateTime             @db.Date
+  notifyMode      ReviewNotifyMode     @default(IMMEDIATELY)
+  notifyDate      DateTime?            @db.Date
+  isFreeFormat    Boolean              @default(false)
+  status          ReviewStatus         @default(DRAFT)
+  totalActual     Decimal?             @db.Decimal(8, 4)
+  createdByUserId String
+  version         Int                  @default(1)
+  createdAt       DateTime             @default(now()) @db.Timestamptz(6)
+  updatedAt       DateTime             @updatedAt @db.Timestamptz(6)
+  contract        PerformanceContract? @relation(fields: [contractId], references: [id])
+  participants    ReviewParticipant[]
+  objectives      ReviewObjective[]
+  scores          ReviewScore[]
+}
+
+model ReviewParticipant {
+  id         Int             @id @default(autoincrement())
+  reviewId   Int
+  role       ParticipantRole
+  employeeId Int?
+  userId     String?
+  weight     Decimal?        @db.Decimal(6, 2)
+  review     Review          @relation(fields: [reviewId], references: [id])
+  employee   Employee?       @relation(fields: [employeeId], references: [id])
+}
+
+model ReviewObjective {
+  id          Int           @id @default(autoincrement())
+  reviewId    Int
+  title       String
+  description String?
+  weight      Decimal       @db.Decimal(6, 2)
+  sortOrder   Int           @default(0)
+  review      Review        @relation(fields: [reviewId], references: [id])
+  scores      ReviewScore[]
+}
+
+model ReviewScore {
+  id             Int                      @id @default(autoincrement())
+  reviewId       Int
+  contractItemId Int?
+  objectiveId    Int?
+  reviewerUserId String
+  rating         Decimal?                 @db.Decimal(6, 2)
+  comment        String?
+  submittedAt    DateTime?                @db.Timestamptz(6)
+  review         Review                   @relation(fields: [reviewId], references: [id])
+  contractItem   PerformanceContractItem? @relation(fields: [contractItemId], references: [id])
+  objective      ReviewObjective?         @relation(fields: [objectiveId], references: [id])
+}
+
+// ───────────── Platform ─────────────
+model Attachment {
+  id               String    @id @default(uuid())
+  ownerEntity      String
+  ownerEntityId    String
+  fileName         String
+  mimeType         String
+  sizeBytes        Int
+  sha256           String
+  storageKey       String    @unique
+  uploadedByUserId String
+  createdAt        DateTime  @default(now()) @db.Timestamptz(6)
+  deletedAt        DateTime? @db.Timestamptz(6)
+  uploadedBy       User      @relation(fields: [uploadedByUserId], references: [id])
+
+  @@index([ownerEntity, ownerEntityId])
+}
+
+model Notification {
+  id        String    @id @default(uuid())
+  userId    String
+  kind      String
+  title     String
+  body      String
+  link      String?
+  readAt    DateTime? @db.Timestamptz(6)
+  createdAt DateTime  @default(now()) @db.Timestamptz(6)
+  user      User      @relation(fields: [userId], references: [id])
+
+  @@index([userId, readAt])
+}
+
+model DashboardLayout {
+  userId    String   @id
+  widgets   Json
+  updatedAt DateTime @updatedAt @db.Timestamptz(6)
+  user      User     @relation(fields: [userId], references: [id])
+}
+
+model ReferenceSequence {
+  key       String @id
+  lastValue Int
+}
+
+model SystemSetting {
+  key             String   @id
+  value           Json
+  updatedByUserId String?
+  updatedAt       DateTime @updatedAt @db.Timestamptz(6)
+}
+
+model AuditLog {
+  id                 BigInt        @id @default(autoincrement())
+  occurredAt         DateTime      @default(now()) @db.Timestamptz(6)
+  requestId          String?
+  sessionId          String?
+  actorUserId        String?
+  actorUsername      String?
+  actingAsEmployeeId Int?
+  subjectEmployeeId  Int?
+  category           AuditCategory
+  action             String
+  entityType         String?
+  entityId           String?
+  outcome            AuditOutcome  @default(SUCCESS)
+  before             Json?
+  after              Json?
+  changes            Json?
+  reason             String?
+  ip                 String?
+  userAgent          String?
+  metadata           Json?
+  prevHash           String?
+  hash               String        @unique
+
+  @@index([occurredAt])
+  @@index([entityType, entityId])
+  @@index([actorUserId, occurredAt])
+  @@index([subjectEmployeeId, occurredAt])
+  @@index([category, action])
+}
+
+model AuditAnchor {
+  day         DateTime @id @db.Date
+  lastAuditId BigInt
+  lastHash    String
+  createdAt   DateTime @default(now()) @db.Timestamptz(6)
+}
+
+// ───────────── Additions beyond the spec schema (see docs/ASSUMPTIONS.md) ─────────────
+
+/// Stored responses for `Idempotency-Key` replays (section 0.9).
+model IdempotencyRecord {
+  key            String   @id
+  userId         String
+  method         String
+  path           String
+  requestHash    String
+  responseStatus Int
+  responseBody   Json
+  createdAt      DateTime @default(now()) @db.Timestamptz(6)
+
+  @@index([createdAt])
+}

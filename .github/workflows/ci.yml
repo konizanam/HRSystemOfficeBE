@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 20
+    env:
+      DATABASE_URL: postgresql://app_user:app_user@localhost:5432/peoplehub_test
+      MIGRATION_DATABASE_URL: postgresql://app_owner:app_owner@localhost:5432/peoplehub_test
+      TEST_DATABASE_URL: postgresql://app_user:app_user@localhost:5432/peoplehub_test
+      TEST_MIGRATION_DATABASE_URL: postgresql://app_owner:app_owner@localhost:5432/peoplehub_test
+      ENCRYPTION_KEYS: '{"k1":"MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY="}'
+      ENCRYPTION_ACTIVE_KEY: k1
+      NODE_ENV: test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Create database roles
+        run: |
+          PGPASSWORD=postgres psql -h localhost -U postgres -d postgres \
+            -v owner_pw=app_owner -v user_pw=app_user -v db=peoplehub_test -f scripts/db-roles.sql
+      - run: pnpm build
+      - run: pnpm format:check
+      - run: pnpm lint
+      - run: pnpm typecheck
+      - run: pnpm test
+      - run: pnpm test:int
+      - name: Seed and verify the audit chain
+        run: |
+          pnpm --filter @peoplehub/api db:seed
+          pnpm audit:verify

@@ -158,5 +158,56 @@ describe('seed (section 14)', () => {
       ['4.0000', '12.0000'],
       ['5.0000', '8.0000'],
     ]);
+
+    // Section 5.3.1: the observed claim groups (with the "Other Calims" misspelling) and types,
+    // each with a NO_CAP cap for every company rule.
+    expect(second).toMatchObject({
+      claimGroupsCreated: 0,
+      claimTypesCreated: 0,
+      claimCapsCreated: 0,
+      hourlyRatesSet: 0,
+    });
+    const groups = await t.db.prisma.claimGroup.findMany({
+      where: { id: { lte: 5 } },
+      orderBy: { id: 'asc' },
+    });
+    expect(groups.map((g) => [g.id, g.code, g.description])).toEqual([
+      [1, 'MSN_OT', 'Overtime Claims'],
+      [2, 'OT', 'Overtime Claims'],
+      [3, 'MSN_OTHER', 'Other Claims'],
+      [4, 'OTHER', 'Other Calims'],
+      [5, 'REBATECLMS', 'Rebate Claims'],
+    ]);
+    const claimTypes = await t.db.prisma.claimType.findMany({
+      where: { id: { lte: 16 } },
+      include: { caps: { where: { companyRuleId: null } } },
+      orderBy: { id: 'asc' },
+    });
+    const byGroup = (groupId: number) => claimTypes.filter((x) => x.groupId === groupId).map((x) => x.code);
+    const overtime = ['OT1_5', 'OT2_0', 'NSHIFT', 'STANDBY', 'STANDBY_WK'];
+    const other = ['CALL_OUT', 'S&T', 'KM_CLM'];
+    expect([byGroup(1), byGroup(2), byGroup(3), byGroup(4), byGroup(5)]).toEqual([
+      overtime,
+      overtime,
+      other,
+      other,
+      [],
+    ]);
+    expect(claimTypes.every((x) => x.caps.length === 1 && x.caps[0]?.mode === 'NO_CAP')).toBe(true);
+    const tiles = (await agent.get('/claims/groups').expect(200)).body.items as {
+      code: string;
+      canStart: boolean;
+    }[];
+    expect(tiles.filter((g) => g.canStart).map((g) => g.code)).toEqual([
+      'MSN_OT',
+      'OT',
+      'MSN_OTHER',
+      'OTHER',
+    ]);
+    const setup = (await agent.get('/claims/groups/1/setup').expect(200)).body;
+    expect(setup.types.find((x: { code: string }) => x.code === 'OT1_5')).toMatchObject({
+      effectiveRate: '127.5000',
+      rateSource: 'EMPLOYEE_HOURLY_RATE',
+    });
   });
 });

@@ -44,6 +44,11 @@ export interface SubjectDescription {
   data: Record<string, unknown>;
   /** Card link text, e.g. "View leave request". */
   viewLabel: string;
+  /**
+   * Other owner entities whose attachments belong to this request (for example the lines of a
+   * claim). The detail panel lists them with the subject's own attachments.
+   */
+  attachmentOwners?: { entity: string; entityId: string }[];
 }
 
 /** Passed to every lifecycle hook. Writes go through `tx` so they commit with the workflow change. */

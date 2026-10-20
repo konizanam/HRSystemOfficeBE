@@ -305,7 +305,17 @@ export const CanStartResponseSchema = z.object({
 });
 export type CanStartResponse = z.infer<typeof CanStartResponseSchema>;
 
-/** GET /workflow/pay-periods (PAYROLL_ADMIN): open periods to process approved items into. */
+/**
+ * GET /workflow/pay-periods?companyRuleId= (PAYROLL_ADMIN): open periods to process approved items
+ * into. Pass the applicant's `companyRuleId` (on the inbox card) to list only the periods the item
+ * can be processed into.
+ */
+export const PayPeriodsQuerySchema = z.object({
+  companyRuleId: z.coerce.number().int().positive().optional(),
+});
+export type PayPeriodsQuery = z.infer<typeof PayPeriodsQuerySchema>;
+
+/** An open pay period of a company rule. */
 export const PayPeriodSchema = z.object({
   id: z.number().int(),
   companyRuleId: z.number().int(),

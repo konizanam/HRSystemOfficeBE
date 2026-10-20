@@ -252,6 +252,50 @@ export class AttachmentService {
     return bound;
   }
 
+  /**
+   * Removes (soft-deletes) attachments that are bound to one of `owners`, inside the caller's
+   * transaction: a file taken off a draft that is still being edited (for example a claim line).
+   * The owning module has already checked that the caller may edit the owner. Every id must be
+   * an undeleted attachment of one of the owners; otherwise 422 on `path`.
+   */
+  async detach(
+    tx: Tx,
+    ctx: SecurityContext,
+    ids: readonly string[],
+    owners: readonly { entity: string; entityId: string | number }[],
+    subjectEmployeeId: number,
+    path = 'removeAttachmentIds',
+  ): Promise<AttachmentRow[]> {
+    const allowed = new Set(owners.map((o) => `${o.entity}:${String(o.entityId)}`));
+    const removed: AttachmentRow[] = [];
+    for (const [index, id] of ids.entries()) {
+      await this.db.lockRow(tx, 'Attachment', id);
+      const row = await tx.attachment.findUnique({ where: { id } });
+      if (!row || row.deletedAt !== null || !allowed.has(`${row.ownerEntity}:${row.ownerEntityId}`)) {
+        throw new DomainError(
+          422,
+          'Validation failed',
+          'This file is not attached here',
+          [{ path: `${path}.${index}`, message: 'This file is not attached here' }],
+          ATTACHMENT_PROBLEM_TYPES.notAvailable,
+        );
+      }
+      const after = await tx.attachment.update({ where: { id }, data: { deletedAt: new Date() } });
+      this.audit.record(tx, ctx, {
+        category: 'DATA_CHANGE',
+        action: 'ATTACHMENT.DELETED',
+        entityType: 'Attachment',
+        entityId: id,
+        subjectEmployeeId,
+        before: row,
+        after,
+        reason: 'Removed from a draft',
+      });
+      removed.push(after);
+    }
+    return removed;
+  }
+
   /** Attachments bound to an owner entity, oldest first. */
   async listFor(client: Tx, ownerEntity: string, ownerEntityId: string | number): Promise<Attachment[]> {
     const rows = await client.attachment.findMany({

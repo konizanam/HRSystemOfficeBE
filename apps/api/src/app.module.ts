@@ -9,6 +9,7 @@ import { EventsModule } from './events/events.module';
 import { HealthController } from './health/health.controller';
 import { AttachmentsModule } from './modules/attachments/attachments.module';
 import { AuthModule } from './modules/auth/auth.module';
+import { ClaimsModule } from './modules/claims/claims.module';
 import { HolidaysModule } from './modules/holidays/holidays.module';
 import { LeaveModule } from './modules/leave/leave.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
@@ -54,6 +55,7 @@ import { WorkflowModule } from './modules/workflow/workflow.module';
     AttachmentsModule,
     HolidaysModule,
     LeaveModule,
+    ClaimsModule,
   ],
   controllers: [HealthController],
   providers: [

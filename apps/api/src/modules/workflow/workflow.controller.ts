@@ -12,6 +12,7 @@ import {
   DeclineRequestSchema,
   IdParamSchema,
   ParkRequestSchema,
+  PayPeriodsQuerySchema,
   PayPeriodsResponseSchema,
   ProcessRequestSchema,
   ReassignRequestSchema,
@@ -47,6 +48,7 @@ class ProcessRequestDto extends createZodDto(ProcessRequestSchema) {}
 class BulkActionResponseDto extends createZodDto(BulkActionResponseSchema) {}
 class CanStartQueryDto extends createZodDto(CanStartQuerySchema) {}
 class CanStartResponseDto extends createZodDto(CanStartResponseSchema) {}
+class PayPeriodsQueryDto extends createZodDto(PayPeriodsQuerySchema) {}
 class PayPeriodsResponseDto extends createZodDto(PayPeriodsResponseSchema) {}
 class UserOptionsQueryDto extends createZodDto(UserOptionsQuerySchema) {}
 class UserOptionsResponseDto extends createZodDto(UserOptionsResponseSchema) {}
@@ -229,13 +231,23 @@ export class WorkflowController {
     };
   }
 
-  /** Open pay periods in the payroll admin's companies, for the "Process" dialog. */
+  /**
+   * Open pay periods in the payroll admin's companies, for the "Process" dialog; `companyRuleId`
+   * (the applicant's, from the inbox card) narrows them to the ones the item can go into.
+   */
   @Get('pay-periods')
   @Roles('PAYROLL_ADMIN')
   @ApiOkResponse({ type: PayPeriodsResponseDto })
-  async payPeriods(@Ctx() ctx: SecurityContext): Promise<PayPeriodsResponseDto> {
+  async payPeriods(
+    @Ctx() ctx: SecurityContext,
+    @Query() query: PayPeriodsQueryDto,
+  ): Promise<PayPeriodsResponseDto> {
     const rows = await this.db.prisma.payPeriod.findMany({
-      where: { isClosed: false, companyRule: { companyId: { in: ctx.companyIds } } },
+      where: {
+        isClosed: false,
+        companyRule: { companyId: { in: ctx.companyIds } },
+        ...(query.companyRuleId !== undefined ? { companyRuleId: query.companyRuleId } : {}),
+      },
       include: { companyRule: { select: { description: true } } },
       orderBy: [{ companyRuleId: 'asc' }, { startDate: 'asc' }],
     });

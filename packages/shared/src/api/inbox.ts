@@ -96,6 +96,10 @@ export const InboxApplicantSchema = z.object({
   employeeCode: z.string(),
   firstName: z.string(),
   lastName: z.string(),
+  /** The applicant's company rule, e.g. for the payroll "Process" dialog's pay periods. */
+  companyRuleId: z.number().int(),
+  /** The company rule's label, e.g. "Staff". */
+  companyRule: z.string(),
 });
 export type InboxApplicant = z.infer<typeof InboxApplicantSchema>;
 

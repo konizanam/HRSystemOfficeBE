@@ -111,6 +111,8 @@ describe('inbox API (sections 5.10 and 12.7)', () => {
         employeeCode: e.employeeCode,
         firstName: e.firstName,
         lastName: e.lastName,
+        companyRuleId: e.companyRuleId,
+        companyRule: 'Staff',
       },
       fromDate: '2026-09-24',
       toDate: '2026-09-26',

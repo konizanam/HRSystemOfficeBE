@@ -15,3 +15,5 @@ export * from './api/attachments';
 export * from './api/holidays';
 export * from './api/calendar';
 export * from './api/leave';
+export * from './claims';
+export * from './api/claims';

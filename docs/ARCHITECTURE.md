@@ -37,6 +37,8 @@ modules/<feature>/    one Nest module per feature (auth, workflow, leave, claims
   holidays/           HolidayService (stored rows + rules table, observed dates), holidays.generate job
   leave/              policies, buckets and ledger, units, applications and cancellations, balances,
                       leave in lieu, accrual/rollover/expiry jobs, calendar, HR admin
+  claims/             eligibility and setup, drafts and lines, caps and balances, submit, GROUPEDCLAIM and
+                      CLAIMS handlers, My Expense Claims and its export, HR/Payroll admin
 notifications/templates/  plain HTML email templates (copied to dist by the Nest CLI)
 cli/                  audit-verify, keys-rotate
 ```
@@ -264,6 +266,19 @@ this.owners.register('LeaveApplication', async (client, id) => {
 - **Calendar** (`LeaveCalendarService`): the dashboard calendar, its audited export and `onLeaveTodayCount(ctx)` for the dashboard summary.
 - **Holidays** (`modules/holidays`): `HolidayService.calendar(companyId, from, to)` gives the excluded days (observed dates included) for the unit calculation.
 
+## Claims
+
+`modules/claims` implements spec section 5.3.
+
+- **Eligibility** (`ClaimSetupService`): a claim type applies to an employee's company rule through its active caps: the rule's own caps, or else the global ones (`capsForRule`). A group's tile can start when one of its types applies and `WorkflowEngine.canStartFor(employee, 'GROUPEDCLAIM', groupId)` is true. The setup endpoint resolves each type's rate (`resolveClaimRate` in `packages/shared`: `ClaimType.rate`, or `Employee.hourlyRate × rateMultiplier` for HOURS).
+- **Line amounts** come from `computeClaimLineAmount` (shared, so the editor's live total matches the server): HOURS = hours × rate (hours from the start and end time when given), KILOMETRES = km × rate per km, QUANTITY = quantity × rate, AMOUNT = as entered. The server recomputes every line on each save and again on submit with today's rates; the client never sends an amount for the other modes.
+- **Drafts** (`ClaimService`): `POST /claims` and `PUT /claims/:id` (version checked) write the lines grid; lines keep their `id`, lines left out are soft-deleted (`ClaimLine.deletedAt`) with their files. Files are bound at save time to `Claim` or `ClaimLine` and taken off with `AttachmentService.detach`; both owners have attachment resolvers, so approvers can download line files.
+- **Caps and balances** (`ClaimBalanceService`, pure rules in `claim-rules.ts`): per type, cap and cycle (`cycleFor`: calendar year, calendar month, or the pay period of the company rule), pending (in flight) and claimed (processed) line totals, payroll adjustments (`ClaimBalanceAdjustment` by cycle start) and the pro-rata limit (`proRataFactor` = months employed in the cycle / cycle length). `check` returns the WARN warnings (stored in `Claim.warnings`) and the BLOCK errors (422 on the line); `balances` builds the section 5.3.3 grid.
+- **Submit** runs in one transaction: lock the claim and the employee, recompute, check lines → attachments → caps, allocate `C{entity}-G{group}-N{seq}` (`sequenceKeys.claim`), start CLAIMS (one claim type, when a CLAIMS definition applies) or GROUPEDCLAIM with the group id as discriminator, audit `CLAIM.SUBMITTED`.
+- **Handlers** (`ClaimSubjectHandler` per type over `ClaimWorkflowService`): `describe` gives the group, description, lines and total (`ClaimSubjectData`) and lists the lines as extra attachment owners; `warnings` shows the stored cap warnings to approvers; final approval records the approver; processing links the pay period and sets PROCESSED; decline, withdraw, cancel and send back mirror the status; a resubmission may carry edited lines and is checked again.
+- **Reads**: My Expense Claims (`scope` self / reports / company, the §5.3.2 status buckets from `CLAIM_STATUS_FILTER_MAP`), its audited export (`EXPORT.CLAIMS`), the Saved Claims list and the detail with the approval history. Claim readers follow the leave rule (`claim-access.ts`): self or "Working as", manager, HR/Payroll in scope, auditors, plus the process's approvers.
+- **Admin** (`ClaimAdminService`): groups, types and caps (HR_ADMIN or PAYROLL_ADMIN; deactivate, never delete; versioned) and balance adjustments (PAYROLL_ADMIN).
+
 ## Database roles
 
 | Role        | Used by                                                         | Rights                                                                                                                |
@@ -286,7 +301,8 @@ The fixtures in `test/support/` sign users in and build an authenticated agent f
 
 - `createOrg`, `createPerson` and `createRoleFixtures` (one person per role, manager A → manager B → employees, an unrelated colleague and another company) in `fixtures.ts`. Codes and usernames come from a database sequence, so they never collide between runs.
 - `login(t, person)` returns an `Agent` that sends the session cookie, the CSRF header and its own `x-forwarded-for` IP (so rate limits do not leak between tests).
-- `authz.ts` holds the authorisation-matrix runner; `test/int/authz-matrix.int.test.ts` (Phase 2), `test/int/authz-matrix-workflow.int.test.ts` (Phase 3) and `test/int/authz-matrix-leave.int.test.ts` (Phase 4) list the cases. Add new endpoints to a matrix file for your phase.
+- `authz.ts` holds the authorisation-matrix runner; `test/int/authz-matrix.int.test.ts` (Phase 2), `test/int/authz-matrix-workflow.int.test.ts` (Phase 3) and `test/int/authz-matrix-leave.int.test.ts` (Phase 4) and `test/int/authz-matrix-claims.int.test.ts` (Phase 5) list the cases. Add new endpoints to a matrix file for your phase.
 - `leave.ts` holds the leave kit: `setup(org)` seeds the leave reference data and holidays (idempotent) and the two-step definitions of the leave workflow types on the fixture company rule; `accrue(employeeIds, asOf?)`, `monday(days)` and `range(from, units)` for future working-day ranges, `upload(agent)` and `submit(agent, body)`.
+- `claims.ts` holds the claims kit: `setup(org)` seeds the claim reference data (idempotent) and the GROUPEDCLAIM and CLAIMS definitions on the fixture company rule; `group()` and `type(groupId, companyRuleId, spec)` create fresh groups and types whose caps sit on the fixture company rule (so they never reach other tests); `setHourlyRate`, `upload`, `create`, `submit` and `approve`.
 - `workflow.ts` holds the workflow kit: `FakeSubjectHandler` (records every hook call and describes subjects from memory), `kit.useFakeHandler(type)` (swaps it in for a real type and restores the original at the end), `kit.definition(...)` for a definition on a fixture company rule (which outranks the seeded defaults), `kit.start(...)`, `kit.payPeriod(org)`, `kit.publish()` (delivers the outbox and waits for email) and `contextFor(person)`.
 - `t.mail.outbox` / `t.mail.flush()` read email sent in memory mode; `fake-oidc.ts` is a minimal OpenID provider.

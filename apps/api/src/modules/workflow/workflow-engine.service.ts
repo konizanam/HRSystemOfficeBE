@@ -445,15 +445,29 @@ export class WorkflowEngine {
     type: WorkflowTypeCode,
     discriminator?: string | null,
   ): Promise<boolean> {
-    const employee = await this.db.prisma.employee.findFirst({
-      where: { id: ctx.actingAsEmployeeId, deletedAt: null, status: 'ACTIVE' },
+    return this.canStartFor(ctx.actingAsEmployeeId, type, discriminator);
+  }
+
+  /**
+   * employeeCanStartWorkflow for a given employee (for example a report a manager applies for):
+   * the employee is active, the type is active and a definition applies to the employee's company
+   * rule and the discriminator. The caller checks that it may act for the employee.
+   */
+  async canStartFor(
+    employeeId: number,
+    type: WorkflowTypeCode,
+    discriminator?: string | null,
+    client: Tx = this.db.prisma,
+  ): Promise<boolean> {
+    const employee = await client.employee.findFirst({
+      where: { id: employeeId, deletedAt: null, status: 'ACTIVE' },
       select: { companyRuleId: true },
     });
     if (!employee) return false;
-    const workflowType = await this.db.prisma.workflowType.findUnique({ where: { code: type } });
+    const workflowType = await client.workflowType.findUnique({ where: { code: type } });
     if (!workflowType?.isActive) return false;
     const definition = await this.findDefinition(
-      this.db.prisma,
+      client,
       workflowType.id,
       employee.companyRuleId,
       discriminator ?? null,

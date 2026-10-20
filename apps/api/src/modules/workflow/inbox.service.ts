@@ -47,7 +47,16 @@ const APPROVER_ACTIONS = ['APPROVE', 'DECLINE', 'REASSIGN', 'SEND_BACK', 'PARK',
 const CARD_INCLUDE = (userId: string) =>
   ({
     workflowType: { select: { code: true } },
-    subjectEmployee: { select: { id: true, employeeCode: true, firstName: true, lastName: true } },
+    subjectEmployee: {
+      select: {
+        id: true,
+        employeeCode: true,
+        firstName: true,
+        lastName: true,
+        companyRuleId: true,
+        companyRule: { select: { description: true } },
+      },
+    },
     stepInstances: {
       where: { assigneeUserId: userId, status: { in: [...OPEN_STEP_STATUSES] } },
       select: { id: true, status: true, parkedUntil: true, round: true, stepNo: true },
@@ -293,6 +302,8 @@ export class InboxService {
           employeeCode: e.employeeCode,
           firstName: e.firstName,
           lastName: e.lastName,
+          companyRuleId: e.companyRuleId,
+          companyRule: e.companyRule.description,
         },
         fromDate,
         toDate,
@@ -362,6 +373,10 @@ export class InboxService {
           OR: [
             { ownerEntity: p.subjectEntity, ownerEntityId: p.subjectEntityId },
             { ownerEntity: 'WorkflowProcess', ownerEntityId: String(p.id) },
+            ...(description.attachmentOwners ?? []).map((o) => ({
+              ownerEntity: o.entity,
+              ownerEntityId: o.entityId,
+            })),
           ],
         },
         orderBy: { createdAt: 'asc' },

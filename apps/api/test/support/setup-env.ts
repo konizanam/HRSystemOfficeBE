@@ -13,4 +13,11 @@ process.env.SMTP_SECURE = 'false';
 process.env.SMTP_USER = '';
 process.env.SMTP_PASS = '';
 process.env.MAIL_TRANSPORT = 'memory';
+process.env.COOKIE_SECURE = 'true';
+process.env.PUBLIC_URL = 'http://localhost:5173';
+// OIDC stays unconfigured unless a test file sets it up (oidc.int.test.ts runs a fake provider).
+process.env.OIDC_ISSUER = '';
+process.env.OIDC_CLIENT_ID = '';
+process.env.OIDC_CLIENT_SECRET = '';
+process.env.OIDC_AUTO_PROVISION = 'false';
 resetEnvCache();

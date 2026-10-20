@@ -28,6 +28,10 @@ crypto/               EncryptionService (AES-256-GCM), key rotation
 storage/              StorageService (local disk or S3)
 jobs/                 JobsService (pg-boss; runNow for tests)
 modules/<feature>/    one Nest module per feature (auth, workflow, leave, claims, details, …)
+  auth/               sessions, SessionGuard + RolesGuard (global), login/OIDC/MFA, ScopeService
+  settings/           SettingsService: typed SystemSetting access with defaults and a cache
+  notifications/      MailService (nodemailer; MAIL_TRANSPORT=memory keeps an outbox for tests)
+notifications/templates/  plain HTML email templates (copied to dist by the Nest CLI)
 cli/                  audit-verify, keys-rotate
 ```
 
@@ -60,10 +64,21 @@ return this.db.tx(ctx, async (tx) => {
 - Reference numbers come from `db.nextSequence(tx, sequenceKeys.leave(...))` inside the submit transaction, formatted with the shared `format*Reference` helpers.
 - Process rows are locked with `db.lockRow(tx, 'WorkflowProcess', id)` before workflow actions.
 
+### Authentication
+
+- Every route needs a session unless it is marked `@Public()`. `SessionGuard` builds `request.securityContext`, checks CSRF (`x-csrf-token` must equal the `ph_csrf` cookie and the session's token) on unsafe methods, and refuses everything except `@AllowPendingPasswordChange()` routes while a password change is required.
+- `@Roles('HR_ADMIN', …)` on a controller or handler restricts it to those roles (`RolesGuard`).
+- Each `/auth/*` handler carries `@AuthRateLimit()` (10 requests per minute per IP).
+- Settings are read with `settings.get('session.idleMinutes')`; the keys, schemas and defaults are in `packages/shared/src/api/settings.ts`.
+- Email goes through `mail.sendInBackground({ to, template, data })`. Add a template by adding its HTML file and an entry in `MailTemplateData` and `MAIL_SUBJECTS`.
+
 ### Reads and scoping
 
 - Controllers take `@Ctx() ctx: SecurityContext`. Every query is scoped by the caller (spec §4): self, a report within `workingAs.maxDepth`, or company scope for admins.
-- Use the scope helpers in `modules/auth/scope.service.ts` rather than writing ad-hoc checks. Never trust an employee id from the client without checking it.
+- Use the scope helpers in `modules/auth/scope.service.ts` rather than writing ad-hoc checks. Never trust an employee id from the client without checking it:
+  - `assertCanAccessEmployee(ctx, employeeId, purpose)` with purpose `SELF_SERVICE` (the "Working as" rule), `TEAM`, `HR_READ`, `HR_WRITE`, `PAYROLL` or `AUDIT`; 404 when missing, 403 (audited DENIED) when out of scope.
+  - `assertNotRestricted(ctx, 'PAYSLIPS')` before any feature in `workingAs.restrictedFeatures`.
+  - `canActFor(ctx, employeeId)` and `reportIdsWithinDepth(managerEmployeeId, depth?)` for lists.
 - Sensitive reads are decorated with `@AuditView({ what: 'PAYSLIP', entityType: 'Payslip' })`.
 
 ### Validation and errors
@@ -103,4 +118,9 @@ To add a migration, edit `prisma/schema.prisma` and run `pnpm --filter @peoplehu
 | API integration | `pnpm test:int`                              | `test/int/**`, Supertest against `createApp()` on `TEST_DATABASE_URL` (Testcontainers when unset); files run serially; use unique keys, never assume an empty DB |
 | Web e2e         | `pnpm --filter @peoplehub/web e2e` (FE repo) | Playwright, including the radius/shadow visual rule                                                                                                              |
 
-The fixtures in `test/support/` sign users in and build an authenticated agent for each role.
+The fixtures in `test/support/` sign users in and build an authenticated agent for each role:
+
+- `createOrg`, `createPerson` and `createRoleFixtures` (one person per role, manager A → manager B → employees, an unrelated colleague and another company) in `fixtures.ts`. Codes and usernames come from a database sequence, so they never collide between runs.
+- `login(t, person)` returns an `Agent` that sends the session cookie, the CSRF header and its own `x-forwarded-for` IP (so rate limits do not leak between tests).
+- `authz.ts` holds the authorisation-matrix runner; `test/int/authz-matrix.int.test.ts` lists the cases. Add new endpoints there.
+- `t.mail.outbox` / `t.mail.flush()` read email sent in memory mode; `fake-oidc.ts` is a minimal OpenID provider.

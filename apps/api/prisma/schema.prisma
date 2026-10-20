@@ -390,6 +390,8 @@ model User {
   lastLoginAt        DateTime?    @db.Timestamptz(6)
   passwordChangedAt  DateTime?    @db.Timestamptz(6)
   mfaSecretEnc       String?
+  /// Set when the TOTP secret has been verified; null while enrolment is pending (see ASSUMPTIONS).
+  mfaEnabledAt       DateTime?    @db.Timestamptz(6)
   version            Int          @default(1)
   createdAt          DateTime     @default(now()) @db.Timestamptz(6)
   updatedAt          DateTime     @updatedAt @db.Timestamptz(6)
@@ -398,6 +400,7 @@ model User {
   sessions           Session[]
   passwordHistory    PasswordHistory[]
   passwordResets     PasswordResetToken[]
+  mobilePairings     MobilePairingToken[]
   outOfOffice        OutOfOffice?           @relation("OOOOwner")
   oooMainNominee     OutOfOffice[]          @relation("OOOMainNominee")
   oooRuleNominee     OutOfOfficeRule[]      @relation("OOORuleNominee")
@@ -1463,4 +1466,17 @@ model IdempotencyRecord {
   createdAt      DateTime @default(now()) @db.Timestamptz(6)
 
   @@index([createdAt])
+}
+
+/// Short-lived token shown as a QR code on "Setup mobile" (ASSUMPTION A3). Only its sha256 is stored.
+model MobilePairingToken {
+  id        String    @id @default(uuid())
+  userId    String
+  tokenHash String    @unique
+  expiresAt DateTime  @db.Timestamptz(6)
+  usedAt    DateTime? @db.Timestamptz(6)
+  createdAt DateTime  @default(now()) @db.Timestamptz(6)
+  user      User      @relation(fields: [userId], references: [id])
+
+  @@index([userId])
 }

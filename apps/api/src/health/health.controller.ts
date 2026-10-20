@@ -1,11 +1,13 @@
 import { Controller, Get, Header, HttpCode, ServiceUnavailableException } from '@nestjs/common';
 import { ApiExcludeController } from '@nestjs/swagger';
 import { JobsService } from '../jobs/jobs.service';
+import { Public } from '../modules/auth/decorators';
 import { metricsRegistry } from '../metrics/registry';
 import { DbService } from '../prisma/db.service';
 
 /** Liveness, readiness and Prometheus metrics (section 15). Served outside /api/v1. */
 @ApiExcludeController()
+@Public()
 @Controller()
 export class HealthController {
   constructor(

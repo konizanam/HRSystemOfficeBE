@@ -41,8 +41,10 @@ const EnvSchema = z.object({
   OIDC_CLIENT_SECRET: z.string().optional(),
   OIDC_REDIRECT_URI: z.string().optional(),
   OIDC_AUTO_PROVISION: bool.default(false),
+  OIDC_SCOPES: z.string().default('openid profile email'),
   JOBS_ENABLED: bool.default(true),
-  COOKIE_SECURE: bool.optional(),
+  /** Session and CSRF cookies are Secure unless this is false (local http only). */
+  COOKIE_SECURE: bool.default(true),
 });
 
 export type Env = z.infer<typeof EnvSchema>;
@@ -59,6 +61,11 @@ export function env(): Env {
     cached = parsed.data;
   }
   return cached;
+}
+
+/** OIDC sign-in is available only when issuer, client id and redirect URI are all set. */
+export function oidcConfigured(e: Env = env()): boolean {
+  return !!(e.OIDC_ISSUER && e.OIDC_CLIENT_ID && e.OIDC_REDIRECT_URI);
 }
 
 /** Test hook: forget the cached env after process.env changes. */

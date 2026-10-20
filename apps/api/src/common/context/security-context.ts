@@ -59,6 +59,9 @@ export function hasRole(ctx: Pick<SecurityContext, 'roles'>, ...roles: Role[]): 
   return roles.some((r) => ctx.roles.includes(r));
 }
 
-export function isActingForOther(ctx: SecurityContext): boolean {
-  return ctx.selfEmployeeId !== ctx.actingAsEmployeeId;
+/** True while "Working as" someone else. A user without an employee record acts as 0 by default. */
+export function isActingForOther(
+  ctx: Pick<SecurityContext, 'selfEmployeeId' | 'actingAsEmployeeId'>,
+): boolean {
+  return ctx.actingAsEmployeeId !== (ctx.selfEmployeeId ?? 0);
 }

@@ -9,6 +9,30 @@ export const APP_VERSION = '1.0.0';
 /** Minimum policy (section 4.3): 10 characters, 3 of 4 character classes. */
 export const PASSWORD_MIN_LENGTH = 10;
 
+/** Account and session rules from section 4.3. The server enforces them; clients only display them. */
+export const AUTH_POLICY = {
+  /** Consecutive failures that lock a local account. */
+  lockoutThreshold: 5,
+  lockoutMinutes: 15,
+  /** The current password plus this many before it cannot be reused. */
+  passwordHistoryDepth: 5,
+  resetTokenMinutes: 30,
+  sessionAbsoluteHours: 12,
+  mobilePairingMinutes: 5,
+  /** Requests per minute per IP on each /auth/* route (section 10.1). */
+  authRateLimitPerMinute: 10,
+} as const;
+
+/** Problem `type` values the web app branches on. */
+export const AUTH_PROBLEM_TYPES = {
+  invalidCredentials: 'urn:peoplehub:problem:invalid-credentials',
+  accountLocked: 'urn:peoplehub:problem:account-locked',
+  passwordChangeRequired: 'urn:peoplehub:problem:password-change-required',
+  sessionExpired: 'urn:peoplehub:problem:session-expired',
+  csrf: 'urn:peoplehub:problem:csrf',
+  restrictedFeature: 'urn:peoplehub:problem:restricted-while-working-as',
+} as const;
+
 export function passwordPolicyIssues(password: string): string[] {
   const issues: string[] = [];
   if (password.length < PASSWORD_MIN_LENGTH) issues.push(`Use at least ${PASSWORD_MIN_LENGTH} characters`);
@@ -78,6 +102,14 @@ export const RESTRICTED_FEATURES = [
 ] as const;
 export const RestrictedFeatureSchema = z.enum(RESTRICTED_FEATURES);
 export type RestrictedFeature = z.infer<typeof RestrictedFeatureSchema>;
+export const RESTRICTED_FEATURE_LABELS: Record<RestrictedFeature, string> = {
+  PAYSLIPS: 'Payslips',
+  TAX_CERTIFICATES: 'Tax certificates',
+  BANK_ACCOUNT_NUMBERS: 'Bank account numbers',
+  ID_NUMBERS: 'ID numbers',
+  PASSWORD: 'Change password',
+  OUT_OF_OFFICE: 'Out of office',
+};
 
 export const SessionUserSchema = z.object({
   id: z.string(),
@@ -130,6 +162,19 @@ export const ActingAsOptionSchema = z.object({
 });
 export type ActingAsOption = z.infer<typeof ActingAsOptionSchema>;
 
+/** GET /session/acting-as/options. HR admins may narrow their company-wide list with `search`. */
+export const ActingAsOptionsQuerySchema = z.object({ search: z.string().trim().max(100).optional() });
+export type ActingAsOptionsQuery = z.infer<typeof ActingAsOptionsQuerySchema>;
+
+export const ACTING_AS_OPTIONS_LIMIT = 200;
+
+export const ActingAsOptionsResponseSchema = z.object({
+  items: z.array(ActingAsOptionSchema),
+  /** True when more than ACTING_AS_OPTIONS_LIMIT company-scope rows matched; refine with `search`. */
+  truncated: z.boolean(),
+});
+export type ActingAsOptionsResponse = z.infer<typeof ActingAsOptionsResponseSchema>;
+
 export const SetActingAsRequestSchema = z.object({ employeeId: z.number().int().positive() });
 export type SetActingAsRequest = z.infer<typeof SetActingAsRequestSchema>;
 
@@ -142,11 +187,25 @@ export type ChangePasswordRequest = z.infer<typeof ChangePasswordRequestSchema>;
 export const ForgotPasswordRequestSchema = z.object({ usernameOrEmail: z.string().trim().min(1).max(254) });
 export type ForgotPasswordRequest = z.infer<typeof ForgotPasswordRequestSchema>;
 
+/** POST /auth/password/forgot always answers 202 with this body, whether or not the account exists. */
+export const ForgotPasswordResponseSchema = z.object({ message: z.string() });
+export type ForgotPasswordResponse = z.infer<typeof ForgotPasswordResponseSchema>;
+
 export const ResetPasswordRequestSchema = z.object({
   token: z.string().min(20),
   newPassword: NewPasswordSchema,
 });
 export type ResetPasswordRequest = z.infer<typeof ResetPasswordRequestSchema>;
+
+/** GET /auth/oidc/start. `returnTo` is a path inside the web app (open redirects are refused). */
+export const OidcStartQuerySchema = z.object({
+  returnTo: z
+    .string()
+    .max(500)
+    .regex(/^\/(?!\/)[^\s\\]*$/, 'Use a path inside the app')
+    .optional(),
+});
+export type OidcStartQuery = z.infer<typeof OidcStartQuerySchema>;
 
 export const MfaEnrollResponseSchema = z.object({
   secret: z.string(),

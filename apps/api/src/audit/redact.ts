@@ -19,6 +19,7 @@ export const REDACTION_POLICIES: Record<string, ModelPolicy> = {
   Session: { secret: ['csrfToken'] },
   PasswordHistory: { secret: ['hash'] },
   PasswordResetToken: { secret: ['tokenHash'] },
+  MobilePairingToken: { secret: ['tokenHash'] },
   IdempotencyRecord: { secret: ['responseBody'] },
   Employee: {
     encrypted: {

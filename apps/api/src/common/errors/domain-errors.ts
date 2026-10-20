@@ -5,8 +5,19 @@ export interface FieldError {
   message: string;
 }
 
+/** Extra detail ProblemFilter adds to the SECURITY.ACCESS_DENIED row of a 401/403. */
+export interface DenialAudit {
+  subjectEmployeeId?: number | null;
+  metadata?: Record<string, unknown>;
+  /** The service already wrote its own audit row (e.g. AUTH.LOGIN_FAILURE); skip the generic one. */
+  alreadyAudited?: boolean;
+}
+
 /** Base for errors rendered as RFC 7807 problem+json by ProblemFilter. */
 export class DomainError extends HttpException {
+  /** Only used for 401/403. */
+  denial?: DenialAudit;
+
   constructor(
     status: number,
     readonly title: string,
@@ -25,14 +36,20 @@ export class NotFoundError extends DomainError {
 }
 
 export class ForbiddenError extends DomainError {
-  constructor(detail = 'You do not have permission to perform this action') {
-    super(HttpStatus.FORBIDDEN, 'Forbidden', detail);
+  constructor(
+    detail = 'You do not have permission to perform this action',
+    denial?: DenialAudit,
+    type?: string,
+  ) {
+    super(HttpStatus.FORBIDDEN, 'Forbidden', detail, undefined, type);
+    this.denial = denial;
   }
 }
 
 export class UnauthorizedError extends DomainError {
-  constructor(detail = 'Authentication required') {
-    super(HttpStatus.UNAUTHORIZED, 'Unauthorized', detail);
+  constructor(detail = 'Authentication required', denial?: DenialAudit, type?: string) {
+    super(HttpStatus.UNAUTHORIZED, 'Unauthorized', detail, undefined, type);
+    this.denial = denial;
   }
 }
 

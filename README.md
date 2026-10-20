@@ -35,6 +35,8 @@ This repository holds the back end of PeopleHub ESS, an Employee Self-Service sy
    pnpm dev            # API on http://localhost:3000, docs at /api/docs
    ```
 
+`pnpm db:seed` creates the section 14 demo users: `hr.admin`, `payroll.admin`, `sys.admin`, `auditor`, `manager.a`, `manager.b` (reports to manager A) and `employee1` to `employee6` (report to manager B). They share one development password, which the seed prints when `NODE_ENV=development`. For local http, set `COOKIE_SECURE=false`.
+
 The Docker stack (`docker compose up`) runs Postgres, Mailpit, MinIO, the API and the web app. The web app is built from `../HRSystemOfficeFE`.
 
 ## Quality gates

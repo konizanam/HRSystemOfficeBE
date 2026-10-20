@@ -4,3 +4,4 @@ export * from './dates';
 export * from './reference';
 export * from './api/common';
 export * from './api/auth';
+export * from './api/settings';

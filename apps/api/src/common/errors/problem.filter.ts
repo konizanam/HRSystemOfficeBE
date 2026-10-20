@@ -13,7 +13,7 @@ import { ZodValidationException } from 'nestjs-zod';
 import { ZodError } from 'zod';
 import { AuditService } from '../../audit/audit.service';
 import { requestMeta } from '../http/request';
-import { ConflictError, DomainError } from './domain-errors';
+import { ConflictError, type DenialAudit, DomainError } from './domain-errors';
 
 const TITLES: Record<number, string> = {
   400: 'Bad Request',
@@ -50,8 +50,9 @@ export class ProblemFilter implements ExceptionFilter {
       this.logger.error({ err: exception, requestId: req.id }, 'Unhandled error');
     }
 
-    if (problem.status === 401 || problem.status === 403) {
-      await this.auditDenied(req, problem).catch((err: unknown) =>
+    const denial = exception instanceof DomainError ? exception.denial : undefined;
+    if ((problem.status === 401 || problem.status === 403) && !denial?.alreadyAudited) {
+      await this.auditDenied(req, problem, denial).catch((err: unknown) =>
         this.logger.error({ err, requestId: req.id }, 'Failed to audit access denial'),
       );
     }
@@ -131,7 +132,7 @@ export class ProblemFilter implements ExceptionFilter {
     };
   }
 
-  private async auditDenied(req: FastifyRequest, problem: Problem): Promise<void> {
+  private async auditDenied(req: FastifyRequest, problem: Problem, denial?: DenialAudit): Promise<void> {
     const ctx = req.securityContext;
     const meta = requestMeta(req);
     await this.audit.recordStandalone(
@@ -146,8 +147,14 @@ export class ProblemFilter implements ExceptionFilter {
         category: 'SECURITY',
         action: 'SECURITY.ACCESS_DENIED',
         outcome: 'DENIED',
+        subjectEmployeeId: denial?.subjectEmployeeId ?? null,
         reason: problem.detail ?? problem.title,
-        metadata: { method: req.method, url: req.url.split('?')[0], status: problem.status },
+        metadata: {
+          ...denial?.metadata,
+          method: req.method,
+          url: req.url.split('?')[0],
+          status: problem.status,
+        },
       },
     );
   }

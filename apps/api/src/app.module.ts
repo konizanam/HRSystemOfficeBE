@@ -10,11 +10,14 @@ import { HealthController } from './health/health.controller';
 import { AttachmentsModule } from './modules/attachments/attachments.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { ClaimsModule } from './modules/claims/claims.module';
+import { DashboardModule } from './modules/dashboard/dashboard.module';
 import { DetailsModule } from './modules/details/details.module';
 import { HolidaysModule } from './modules/holidays/holidays.module';
 import { LeaveModule } from './modules/leave/leave.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
 import { PerformanceModule } from './modules/performance/performance.module';
+import { PayslipsModule } from './modules/payslips/payslips.module';
+import { ReportsModule } from './modules/reports/reports.module';
 import { SettingsModule } from './modules/settings/settings.module';
 import { WorkflowModule } from './modules/workflow/workflow.module';
 
@@ -60,6 +63,9 @@ import { WorkflowModule } from './modules/workflow/workflow.module';
     ClaimsModule,
     DetailsModule,
     PerformanceModule,
+    PayslipsModule,
+    DashboardModule,
+    ReportsModule,
   ],
   controllers: [HealthController],
   providers: [

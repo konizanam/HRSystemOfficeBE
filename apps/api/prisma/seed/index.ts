@@ -7,6 +7,7 @@ import { seedDetails } from './details';
 import { seedHolidays } from './holidays';
 import { seedLeave } from './leave';
 import { seedOrganisation } from './organisation';
+import { seedPayroll } from './payroll';
 import { seedPeople } from './people';
 import { seedPerformance } from './performance';
 import { seedPayPeriods, seedWorkflowDefinitions } from './workflow';
@@ -33,5 +34,6 @@ export async function runSeed(deps: SeedDeps): Promise<SeedSummary> {
   Object.assign(summary, await seedClaims(deps));
   Object.assign(summary, await seedDetails(deps));
   Object.assign(summary, await seedPerformance(deps));
+  Object.assign(summary, await seedPayroll(deps));
   return summary;
 }

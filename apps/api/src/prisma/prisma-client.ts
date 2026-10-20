@@ -85,8 +85,23 @@ export const auditSafetyNet = Prisma.defineExtension({
   },
 });
 
+/**
+ * Prisma gives up waiting for a pooled connection after `pool_timeout` (default 10 s), before an
+ * interactive transaction's `maxWait` comes into play. Defaults it to 60 s so a burst of submits
+ * can wait as `TxOptions.maxWaitMs` intends; a value in the URL wins.
+ */
+export function withPoolTimeout(url: string, seconds = 60): string {
+  try {
+    const parsed = new URL(url);
+    if (!parsed.searchParams.has('pool_timeout')) parsed.searchParams.set('pool_timeout', String(seconds));
+    return parsed.toString();
+  } catch {
+    return url;
+  }
+}
+
 export function createPrismaClient(datasourceUrl: string) {
-  return new PrismaClient({ datasourceUrl }).$extends(auditSafetyNet);
+  return new PrismaClient({ datasourceUrl: withPoolTimeout(datasourceUrl) }).$extends(auditSafetyNet);
 }
 
 export type AppPrismaClient = ReturnType<typeof createPrismaClient>;

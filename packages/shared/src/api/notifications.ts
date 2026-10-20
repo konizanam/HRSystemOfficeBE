@@ -24,6 +24,8 @@ export const NOTIFICATION_KINDS = [
   'PASSWORD_CHANGED',
   'ACCOUNT_LOCKED',
   'PERFORMANCE_REVIEW',
+  'PAYSLIP_AVAILABLE',
+  'TAX_CERTIFICATE_AVAILABLE',
 ] as const;
 export const NotificationKindSchema = z.enum(NOTIFICATION_KINDS);
 export type NotificationKind = z.infer<typeof NotificationKindSchema>;

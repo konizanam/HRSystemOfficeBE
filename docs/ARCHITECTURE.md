@@ -44,6 +44,11 @@ modules/<feature>/    one Nest module per feature (auth, workflow, leave, claims
                       employee transactions (FREETEXTMANEMP), lookups, HR admin
   performance/        parameter lookups, rating scales, templates, contract initiation (job),
                       contracts and archive, reviews (wizard, flow, scores), results, contract reviews
+  payslips/           payslips and tax certificates: audited PDF reads, the PAYROLL_ADMIN imports
+                      (dry run, commit, PDF generation), PayrollDocumentsService (viewers, branding)
+  dashboard/          widget layout, summary, upcoming birthdays
+  reports/            report registry, scope, runner and streaming writers; definitions/ per group
+pdf/                  PdfService (pdfmake, embedded Roboto) and the document definitions
 notifications/templates/  plain HTML email templates (copied to dist by the Nest CLI)
 cli/                  audit-verify, keys-rotate
 ```
@@ -327,6 +332,93 @@ scores ──▶ participant totals (Σ rating × weight / 100, normalised) ─�
 - **Scope** (`PerformanceAccess`): HR in their companies, auditors everywhere, employees their own (reviews once opened), reviewers their participations, managers their reports, and the assignee their contract. List queries use `contractWhere`/`reviewWhere`; details check the same rules and answer 403 (audited).
 - **Seed** (`PerformanceSeedService`, also used by the test kit): the parameter tables, the "1–5" scale and one active template.
 
+## Payslips and tax certificates
+
+`modules/payslips` implements spec sections 5.5 and 5.6.
+
+- **Reads** (`PayslipService`, `TaxCertificateService`): every endpoint first calls `assertNotRestricted(ctx, 'PAYSLIPS' | 'TAX_CERTIFICATES')` (403 + DENIED while working as someone else, by default), then `PayrollDocumentsService.assertCanView` (the employee or the acting-as employee, or PAYROLL_ADMIN of the employee's company). The services write `DATA_VIEW.PAYSLIP` / `EXPORT.PAYSLIP_PDF` and `DATA_VIEW.TAX_CERTIFICATE` / `EXPORT.TAX_CERTIFICATE_PDF` themselves, because the action depends on `?download=1`.
+- **PDFs** are attachments owned by `Payslip` / `TaxCertificate`, created with `AttachmentService.storeGenerated` (before the transaction) and `recordGenerated` (inside it), and read with `readOwned`, which re-checks the sha256. No owner resolver is registered for them, so `GET /attachments/:id` never serves them.
+- **Imports** (`PayslipImportService`, `TaxCertificateImportService`): `rawImportRows` turns CSV (grouped by `payslipRowsFromCsv` / `taxCertificateRowsFromCsv` from `packages/shared`) or JSON into rows; `check` validates each row (schema, employee in the importer's PAYROLL scope, pay period or tax year, employment, duplicates, existing current rows and `replace`). A dry run returns the results and a token (`confirmTokenFor`). A commit renders and stores the PDFs, then re-runs `check` in one transaction and writes the rows, the attachment rows, the audit rows and the in-app notifications.
+- **Rendering**: `pdf/documents.ts` builds pdfmake definitions (`payslipDocument`, `taxCertificateDocument`, `reportDocument`) as pure functions; `PdfService.render` (Buffer) and `PdfService.stream` (reports) print them with the Roboto font embedded from pdfmake's virtual file system.
+
+## Dashboard
+
+`modules/dashboard` implements spec section 5.1: `GET/PUT /dashboard/layout` (per signed-in user, validated against `DASHBOARD_WIDGETS`, normalised on read), `GET /dashboard/summary` (welcome banner, latest payslip and certificate, which come back null with a `restricted` flag while working as someone else, submitted counts, On Leave Today from `LeaveCalendarService.onLeaveTodayCount`, the birthday count) and `GET /birthdays/upcoming` (`BirthdayService`, day and month only, from the pure helpers in `packages/shared/src/birthdays.ts`).
+
+## Reports
+
+`modules/reports` implements spec section 5.7. A report is a `ReportDefinition`:
+
+```ts
+interface ReportDefinition<C extends ReportCode> {
+  code: C;
+  group: ReportGroup;
+  title: string;
+  description: string;
+  params: ZodSchema; // REPORT_PARAM_SCHEMAS[code]
+  paramFields: ReportParamField[]; // the serialisable parameter panel
+  requiredRoles: Role[];
+  columns: ReportColumn[];
+  run(rc: ReportRunContext, params): AsyncIterable<ReportRow>;
+}
+```
+
+The metadata (group, title, roles, columns, parameter panel and the Zod params schema) lives in `packages/shared/src/api/reports.ts` (`REPORT_CATALOGUE`, `REPORT_PARAM_SCHEMAS`), so the web app renders the same columns and validates the same params. The API adds `run` with `defineReport(code, run)`.
+
+How a run works (`ReportsService.run`):
+
+1. The registry finds the report (404) and checks `requiredRoles` (403, audited DENIED).
+2. The params are validated against the report's schema (422 on `params.<name>`).
+3. `ReportScopeService.population` turns the caller's accepted roles into a population (auditors and system admins: everyone; HR and Payroll: their companies; managers: themselves and their reports; employees: themselves). Selected `employeeIds` outside it are 403. `rc.employees` is the population narrowed by the params' company rules, employees and "include terminated".
+4. `EXPORT.REPORT` is audited with the format and the params before the first row is read.
+5. `run` is an async generator over cursor-paginated queries (`batches` in `report-helpers.ts`, 500 rows per round trip). JSON reads one page (`pageOfRows`); CSV (`csvStream`) and Excel (`xlsxStream`, exceljs `WorkbookWriter`) stream every row with chunked encoding; PDF reads at most `REPORT_PDF_ROW_LIMIT` rows into `reportDocument`. Columns flagged `payData` are blanked for a system admin who is not also HR or Payroll.
+
+### Adding a report
+
+1. Add the code, its params schema and its catalogue entry in `packages/shared/src/api/reports.ts`:
+
+```ts
+// REPORT_PARAM_SCHEMAS
+OVERTIME_HOURS: peopleParams({ claimGroupIds: IdListSchema(100).optional() }),
+
+// REPORT_CATALOGUE
+OVERTIME_HOURS: {
+  code: 'OVERTIME_HOURS',
+  group: 'WORKFLOW',
+  title: 'Overtime Hours',
+  description: 'Overtime hours claimed per employee.',
+  requiredRoles: SELF_TEAM_ADMIN,
+  paramFields: [P.range('Line dates between'), ...PEOPLE, P.claimGroups],
+  columns: columns(['employeeCode', 'Employee Code'], ['employeeName', 'Employee Name'], ['hours', 'Hours', 'decimal']),
+},
+```
+
+2. Implement `run` in the group's file under `modules/reports/definitions/` and export it; the registry picks up every export and refuses to start when a catalogue code has no definition:
+
+```ts
+export const overtimeHours = defineReport('OVERTIME_HOURS', async function* (rc, params) {
+  for await (const batch of employeeBatches(rc.prisma, rc.employees, rc.batchSize)) {
+    const lines = await rc.prisma.claimLine.findMany({
+      where: {
+        deletedAt: null,
+        claimType: { inputMode: 'HOURS' },
+        claim: { employeeId: { in: batch.map((e) => e.id) }, status: { not: 'DRAFT' } },
+        ...(params.from || params.to ? { date: dateRange(params.from, params.to) } : {}),
+      },
+      select: { quantity: true, claim: { select: { employeeId: true } } },
+    });
+    for (const e of batch) {
+      const own = lines.filter((l) => l.claim.employeeId === e.id);
+      if (own.length === 0) continue;
+      const hours = own.reduce((t, l) => t.plus(l.quantity ?? 0), new Prisma.Decimal(0));
+      yield { ...employeeCells(e), hours: dec4(hours) };
+    }
+  }
+});
+```
+
+3. Always filter people through `rc.employees` (or `employee: rc.employees` on child tables), read in batches with Prisma cursor pagination, return decimals as strings, dates as `YYYY-MM-DD` and timestamps as ISO (`day`, `ts`, `dec4`, `money`), and mark payslip amounts `payData`. Add the code to the report tests; `reports.int.test.ts` runs every catalogue code as JSON and CSV.
+
 ## Database roles
 
 | Role        | Used by                                                         | Rights                                                                                                                |
@@ -349,10 +441,11 @@ The fixtures in `test/support/` sign users in and build an authenticated agent f
 
 - `createOrg`, `createPerson` and `createRoleFixtures` (one person per role, manager A → manager B → employees, an unrelated colleague and another company) in `fixtures.ts`. Codes and usernames come from a database sequence, so they never collide between runs.
 - `login(t, person)` returns an `Agent` that sends the session cookie, the CSRF header and its own `x-forwarded-for` IP (so rate limits do not leak between tests).
-- `authz.ts` holds the authorisation-matrix runner; `test/int/authz-matrix.int.test.ts` (Phase 2), `test/int/authz-matrix-workflow.int.test.ts` (Phase 3), `test/int/authz-matrix-leave.int.test.ts` (Phase 4), `test/int/authz-matrix-claims.int.test.ts` (Phase 5), `test/int/authz-matrix-details.int.test.ts` (Phase 6) and `test/int/authz-matrix-performance.int.test.ts` (Phase 8) list the cases. Add new endpoints to a matrix file for your phase.
+- `authz.ts` holds the authorisation-matrix runner; `test/int/authz-matrix.int.test.ts` (Phase 2), `test/int/authz-matrix-workflow.int.test.ts` (Phase 3), `test/int/authz-matrix-leave.int.test.ts` (Phase 4), `test/int/authz-matrix-claims.int.test.ts` (Phase 5), `test/int/authz-matrix-details.int.test.ts` (Phase 6), `test/int/authz-matrix-payroll.int.test.ts` (Phase 7) and `test/int/authz-matrix-performance.int.test.ts` (Phase 8) list the cases. Add new endpoints to a matrix file for your phase.
 - `leave.ts` holds the leave kit: `setup(org)` seeds the leave reference data and holidays (idempotent) and the two-step definitions of the leave workflow types on the fixture company rule; `accrue(employeeIds, asOf?)`, `monday(days)` and `range(from, units)` for future working-day ranges, `upload(agent)` and `submit(agent, body)`.
 - `claims.ts` holds the claims kit: `setup(org)` seeds the claim reference data (idempotent) and the GROUPEDCLAIM and CLAIMS definitions on the fixture company rule; `group()` and `type(groupId, companyRuleId, spec)` create fresh groups and types whose caps sit on the fixture company rule (so they never reach other tests); `setHourlyRate`, `upload`, `create`, `submit` and `approve`.
 - `details.ts` holds the My Details kit: `setup(org)` seeds the workflow types, lookups and banks (idempotent) and two-step definitions of BASICINF, BANKDET, DRIVERSLICENSE, BENEFICIARY and FREETEXTMANEMP on the fixture company rule; `upload(agent)`, `approve(agent, processId)` / `approveAll`, `account(person, number)` for a bank account set up directly, and `submitted(res)`.
 - `performance.ts` holds the performance kit: `setup()` seeds the parameter tables, the "1–5" scale and the seed template (idempotent); `template(hr)` creates an ACTIVE template with a unique name (KPA 60/40, competency 100); `initiate(hr, templateId, employeeIds)`, `contractOf(employeeId, templateId)`, `sharedReview(...)`, `freeReview(...)`, `move(agent, reviewId, status)` and `score(agent, review, ratings)`.
+- `payroll.ts` holds the payroll kit: `periods(org, n)` for pay periods of the last n months, `row(employeeCode, periodEnd)`, `importPayslips(agent, rows, replace?)` and `importCertificates(agent, rows)` (dry run then commit), `upload(agent)`, `actAs(agent, employeeId)`, and `bufferParser` (binary bodies with their chunk count, for the streaming checks).
 - `workflow.ts` holds the workflow kit: `FakeSubjectHandler` (records every hook call and describes subjects from memory), `kit.useFakeHandler(type)` (swaps it in for a real type and restores the original at the end), `kit.definition(...)` for a definition on a fixture company rule (which outranks the seeded defaults), `kit.start(...)`, `kit.payPeriod(org)`, `kit.publish()` (delivers the outbox and waits for email) and `contextFor(person)`.
 - `t.mail.outbox` / `t.mail.flush()` read email sent in memory mode; `fake-oidc.ts` is a minimal OpenID provider.

@@ -1238,24 +1238,30 @@ model PayPeriod {
 }
 
 model Payslip {
-  id              Int           @id @default(autoincrement())
-  employeeId      Int
-  payPeriodId     Int
-  payRun          String
-  runType         String        @default("Normal")
-  ruleLabel       String?
-  currency        String        @default("NAD")
-  grossPay        Decimal       @db.Decimal(14, 2)
-  totalDeductions Decimal       @db.Decimal(14, 2)
-  netPay          Decimal       @db.Decimal(14, 2)
-  pdfAttachmentId String?
-  pdfSha256       String?
-  publishedAt     DateTime      @default(now()) @db.Timestamptz(6)
-  employee        Employee      @relation(fields: [employeeId], references: [id])
-  payPeriod       PayPeriod     @relation(fields: [payPeriodId], references: [id])
-  lines           PayslipLine[]
+  id               Int           @id @default(autoincrement())
+  employeeId       Int
+  payPeriodId      Int
+  payRun           String
+  runType          String        @default("Normal")
+  ruleLabel        String?
+  currency         String        @default("NAD")
+  grossPay         Decimal       @db.Decimal(14, 2)
+  totalDeductions  Decimal       @db.Decimal(14, 2)
+  netPay           Decimal       @db.Decimal(14, 2)
+  pdfAttachmentId  String?
+  pdfSha256        String?
+  publishedAt      DateTime      @default(now()) @db.Timestamptz(6)
+  /// The payroll admin who imported it (null for the seed or a job).
+  importedByUserId String?
+  /// Set when a re-import with replace=true superseded this payslip (kept, never deleted; see ASSUMPTIONS).
+  supersededAt     DateTime?     @db.Timestamptz(6)
+  employee         Employee      @relation(fields: [employeeId], references: [id])
+  payPeriod        PayPeriod     @relation(fields: [payPeriodId], references: [id])
+  lines            PayslipLine[]
 
-  @@unique([employeeId, payPeriodId, payRun])
+  /// One current payslip per (employee, period, pay run): partial unique index ux_payslip_current (raw SQL).
+  @@index([employeeId, payPeriodId, payRun])
+  @@index([payPeriodId])
 }
 
 model PayslipLine {
@@ -1273,16 +1279,24 @@ model PayslipLine {
 }
 
 model TaxCertificate {
-  id              Int      @id @default(autoincrement())
-  employeeId      Int
-  taxYear         Int
-  certificateType String
-  pdfAttachmentId String
-  pdfSha256       String
-  issuedAt        DateTime @default(now()) @db.Timestamptz(6)
-  employee        Employee @relation(fields: [employeeId], references: [id])
+  id               Int       @id @default(autoincrement())
+  employeeId       Int
+  taxYear          Int
+  certificateType  String
+  pdfAttachmentId  String
+  pdfSha256        String
+  issuedAt         DateTime  @default(now()) @db.Timestamptz(6)
+  /// UPLOADED (the payroll system's PDF) or GENERATED (rendered from `figures`; see ASSUMPTIONS).
+  source           String    @default("UPLOADED")
+  /// The certificate figures [{code, description, amount}] when they were imported.
+  figures          Json?
+  importedByUserId String?
+  /// Set when a re-import with replace=true superseded this certificate.
+  supersededAt     DateTime? @db.Timestamptz(6)
+  employee         Employee  @relation(fields: [employeeId], references: [id])
 
-  @@unique([employeeId, taxYear, certificateType])
+  /// One current certificate per (employee, tax year, type): partial unique index ux_tax_certificate_current.
+  @@index([employeeId, taxYear, certificateType])
 }
 
 model EmployeeTransaction {

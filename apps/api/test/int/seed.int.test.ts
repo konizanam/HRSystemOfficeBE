@@ -10,6 +10,7 @@ import {
   addMonths,
   businessFromDate,
   startOfMonth,
+  taxYearOf,
   todayBusinessDate,
   units4,
   WORKFLOW_TYPE_CODES,
@@ -209,6 +210,22 @@ describe('seed (section 14)', () => {
       effectiveRate: '127.5000',
       rateSource: 'EMPLOYEE_HOURLY_RATE',
     });
+
+    // Phase 7: payslips for the last three pay periods (imported with PDFs), a tax certificate
+    // for the previous tax year for a few employees and a default dashboard layout.
+    expect(second).toMatchObject({
+      payslipsImported: 0,
+      taxCertificatesImported: 0,
+      dashboardLayoutsCreated: 0,
+    });
+    const payslips = (await agent.get('/payslips?pageSize=10').expect(200)).body;
+    expect(payslips.total).toBeGreaterThanOrEqual(3);
+    const latest = await t.db.prisma.payslip.findUniqueOrThrow({ where: { id: payslips.items[0].id } });
+    expect(latest.pdfSha256).toMatch(/^[0-9a-f]{64}$/);
+    const certificates = (await agent.get('/tax-certificates').expect(200)).body;
+    expect(certificates.years[0].taxYear).toBe(taxYearOf(todayBusinessDate()) - 1);
+    const layout = (await agent.get('/dashboard/layout').expect(200)).body;
+    expect(layout.isDefault).toBe(false);
   });
 
   it('seeds the performance parameters, the 1–5 rating scale and an active template', async () => {

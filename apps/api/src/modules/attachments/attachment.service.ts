@@ -34,6 +34,16 @@ export interface AttachmentDownload {
   bytes: Buffer;
 }
 
+/** A server-generated file already in storage, waiting to be recorded (`recordGenerated`). */
+export interface GeneratedFile {
+  id: string;
+  key: string;
+  fileName: string;
+  mimeType: string;
+  sizeBytes: number;
+  sha256: string;
+}
+
 function problem(status: number, title: string, detail: string, type: string, path = 'file'): DomainError {
   return new DomainError(status, title, detail, [{ path, message: detail }], type);
 }
@@ -294,6 +304,94 @@ export class AttachmentService {
       removed.push(after);
     }
     return removed;
+  }
+
+  // ───────────── Files the server generates (payslip and tax certificate PDFs) ─────────────
+
+  /**
+   * Stores a file the server generated, ahead of the transaction that records it (the storage
+   * write cannot join a database transaction). Call {@link discardGenerated} when that transaction
+   * fails, and {@link recordGenerated} inside it.
+   */
+  async storeGenerated(file: { fileName: string; mimeType: string; bytes: Buffer }): Promise<GeneratedFile> {
+    const id = randomUUID();
+    const key = StorageService.keyFor(id);
+    await this.storage.put(key, file.bytes, file.mimeType);
+    return {
+      id,
+      key,
+      fileName: safeFileName(file.fileName),
+      mimeType: file.mimeType,
+      sizeBytes: file.bytes.length,
+      sha256: createHash('sha256').update(file.bytes).digest('hex'),
+    };
+  }
+
+  /** Removes stored generated files whose transaction did not commit. */
+  async discardGenerated(files: readonly GeneratedFile[]): Promise<void> {
+    for (const file of files) {
+      await this.storage
+        .remove(file.key)
+        .catch((err: unknown) => this.logger.error({ err }, 'Could not remove an orphaned generated file'));
+    }
+  }
+
+  /** Records a stored generated file, bound to its owner, in the owner's transaction (audited). */
+  async recordGenerated(
+    tx: Tx,
+    ctx: SecurityContext,
+    file: GeneratedFile,
+    owner: { entity: string; entityId: string | number; subjectEmployeeId: number },
+  ): Promise<AttachmentRow> {
+    const row = await tx.attachment.create({
+      data: {
+        id: file.id,
+        ownerEntity: owner.entity,
+        ownerEntityId: String(owner.entityId),
+        fileName: file.fileName,
+        mimeType: file.mimeType,
+        sizeBytes: file.sizeBytes,
+        sha256: file.sha256,
+        storageKey: file.key,
+        uploadedByUserId: ctx.userId,
+      },
+    });
+    this.audit.record(tx, ctx, {
+      category: 'DATA_CHANGE',
+      action: 'ATTACHMENT.GENERATED',
+      entityType: 'Attachment',
+      entityId: row.id,
+      subjectEmployeeId: owner.subjectEmployeeId,
+      after: row,
+    });
+    return row;
+  }
+
+  /**
+   * Reads a file bound to `owner` for the owning module, which has already authorised the caller
+   * and writes its own view audit row (payslips, tax certificates). The content is checked
+   * against the stored sha256, so a file changed in storage is never served.
+   */
+  async readOwned(
+    id: string,
+    owner: { entity: string; entityId: string | number },
+  ): Promise<AttachmentDownload & { sha256: string }> {
+    const row = await this.db.prisma.attachment.findUnique({ where: { id } });
+    if (
+      !row ||
+      row.deletedAt ||
+      row.ownerEntity !== owner.entity ||
+      row.ownerEntityId !== String(owner.entityId)
+    ) {
+      throw new NotFoundError('File');
+    }
+    const bytes = await this.storage.get(row.storageKey);
+    const sha256 = createHash('sha256').update(bytes).digest('hex');
+    if (sha256 !== row.sha256) {
+      this.logger.error({ attachmentId: id }, 'Stored file failed its sha256 check');
+      throw new DomainError(500, 'Internal Server Error', 'The stored file failed its integrity check');
+    }
+    return { fileName: row.fileName, mimeType: row.mimeType, bytes, sha256 };
   }
 
   /** Attachments bound to an owner entity, oldest first. */

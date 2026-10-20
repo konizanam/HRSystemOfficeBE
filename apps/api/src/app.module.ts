@@ -5,10 +5,12 @@ import { ZodValidationPipe } from 'nestjs-zod';
 import { ProblemFilter } from './common/errors/problem.filter';
 import { env } from './config/env';
 import { CoreModule } from './core.module';
+import { EventsModule } from './events/events.module';
 import { HealthController } from './health/health.controller';
 import { AuthModule } from './modules/auth/auth.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
 import { SettingsModule } from './modules/settings/settings.module';
+import { WorkflowModule } from './modules/workflow/workflow.module';
 
 @Module({
   imports: [
@@ -41,9 +43,11 @@ import { SettingsModule } from './modules/settings/settings.module';
       },
     }),
     CoreModule,
+    EventsModule,
     SettingsModule,
     NotificationsModule,
     AuthModule,
+    WorkflowModule,
   ],
   controllers: [HealthController],
   providers: [

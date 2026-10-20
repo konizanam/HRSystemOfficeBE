@@ -1,4 +1,4 @@
-import { Injectable, type OnModuleDestroy } from '@nestjs/common';
+import { Injectable, Logger, type OnModuleDestroy } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { auditScopeStorage, currentAuditScope, type AuditScope } from '../audit/audit-scope';
 import { flushAuditScope } from '../audit/audit-writer';
@@ -20,6 +20,7 @@ export interface TxOptions {
  */
 @Injectable()
 export class DbService implements OnModuleDestroy {
+  private static readonly logger = new Logger(DbService.name);
   readonly prisma: AppPrismaClient;
 
   constructor() {
@@ -54,7 +55,8 @@ export class DbService implements OnModuleDestroy {
       }
       return fn(outer.tx as Tx);
     }
-    return this.prisma.$transaction(
+    const effects: (() => void)[] = [];
+    const result = await this.prisma.$transaction(
       async (tx) => {
         const scope: AuditScope = {
           tx,
@@ -62,6 +64,7 @@ export class DbService implements OnModuleDestroy {
           entries: [],
           writes: [],
           allowBulk: options.allowBulk ?? false,
+          afterCommit: effects,
         };
         return auditScopeStorage.run(scope, async () => {
           const result = await fn(tx);
@@ -75,6 +78,25 @@ export class DbService implements OnModuleDestroy {
         maxWait: 10_000,
       },
     );
+    for (const effect of effects) {
+      try {
+        effect();
+      } catch (err) {
+        DbService.logger.error({ err }, 'After-commit effect failed');
+      }
+    }
+    return result;
+  }
+
+  /**
+   * Runs `effect` once the current (outermost) transaction has committed; never when it rolls
+   * back. Outside a transaction it runs straight away. Use it for side effects that must not
+   * happen for a change that did not commit, such as kicking the outbox publisher.
+   */
+  afterCommit(effect: () => void): void {
+    const scope = currentAuditScope();
+    if (scope) scope.afterCommit.push(effect);
+    else effect();
   }
 
   /** Locks a row for the rest of the transaction (`SELECT … FOR UPDATE`). */

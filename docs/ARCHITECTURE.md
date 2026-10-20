@@ -23,14 +23,16 @@ common/
   errors/             DomainError subclasses and ProblemFilter (RFC 7807, audits 401/403)
   http/               @Ctx(), @Meta(), @AuditView(), @Idempotent()
 audit/                AuditService, chain writer, canonical JSON, redaction, safety net, anchors
-prisma/               createPrismaClient (with the audit extension), DbService (tx, lockRow, nextSequence)
+prisma/               createPrismaClient (with the audit extension), DbService (tx, afterCommit, lockRow, nextSequence)
 crypto/               EncryptionService (AES-256-GCM), key rotation
 storage/              StorageService (local disk or S3)
 jobs/                 JobsService (pg-boss; runNow for tests)
+events/               EventBus (in-process listeners) and OutboxService (transactional outbox + publisher job)
 modules/<feature>/    one Nest module per feature (auth, workflow, leave, claims, details, …)
   auth/               sessions, SessionGuard + RolesGuard (global), login/OIDC/MFA, ScopeService
   settings/           SettingsService: typed SystemSetting access with defaults and a cache
-  notifications/      MailService (nodemailer; MAIL_TRANSPORT=memory keeps an outbox for tests)
+  notifications/      MailService (nodemailer; MAIL_TRANSPORT=memory keeps an outbox for tests), NotificationService
+  workflow/           WorkflowEngine, subject registry, approver resolution, out of office, inbox, jobs, notifier
 notifications/templates/  plain HTML email templates (copied to dist by the Nest CLI)
 cli/                  audit-verify, keys-rotate
 ```
@@ -98,7 +100,128 @@ A module registers handlers in `onModuleInit`, for example `jobs.register('leave
 
 ### Workflow subjects
 
-Each workflow type has a `WorkflowSubjectHandler` (`onFinalApproval`, `onProcess`, `onDeclined`, `onCancelled`), registered with the workflow engine. Domain events are written to `OutboxEvent` in the transaction and published by a pg-boss job after commit.
+Each workflow type has a `WorkflowSubjectHandler`, registered with `WorkflowSubjectRegistry`. Domain events are written to `OutboxEvent` in the transaction and published by a pg-boss job after commit. See [Workflow engine](#workflow-engine) below.
+
+## Workflow engine
+
+`modules/workflow` implements spec section 7: definitions, approver resolution, step instances, every action, out of office, escalation and parking, the outbox, notifications and the inbox API. Feature modules never write `WorkflowProcess`, `WorkflowStepInstance` or `WorkflowAction` themselves; they call `WorkflowEngine` and react through a subject handler.
+
+### How a request moves
+
+```
+start ──▶ IN_PROGRESS ──approve (last step)──▶ APPROVED_PENDING_PROCESS ──process──▶ PROCESSED
+            │  ├─ decline ──────▶ DECLINED                         (payroll types only)
+            │  ├─ send back ────▶ RESUBMIT_REQUIRED ──resubmit──▶ IN_PROGRESS (round + 1)
+            │  └─ park / reassign / comment (stays IN_PROGRESS)
+            └─ withdraw / cancel ─▶ CANCELLED
+non-payroll types: last approval ──▶ PROCESSED (APPLY, same transaction)
+onFinalApproval returns CONFLICT ──▶ CONFLICT (HR is alerted)
+```
+
+- **Definitions** are chosen by `(workflowType, companyRule | null, discriminator?)`; the most specific active one wins (`engine-rules.ts: selectDefinition`).
+- **Steps** are planned when they become current (`planStep`): REPORTS_TO, REPORTS_TO_LEVEL_2, SPECIFIC_USER or ROLE. A ROLE step gets one instance per holder; the first to act wins and the others become `SUPERSEDED`. The applicant and the submitter never approve. `skipIfSameApprover` and unresolved optional steps produce `AUTO_SKIP`; an unresolved mandatory step goes to the company's HR admins.
+- **Out of office** is applied to every new assignee (`resolveDelegation`: at most 3 hops, cycle → original assignee + HR alert, never to the applicant).
+- **Every call** (`start`, `act`, `withdraw`, `cancel`, `resubmit`, `process`, `bulkApprove`) runs in one transaction: lock the process row (`db.lockRow`), check the caller, then the `version` (409), write `WorkflowAction` rows, `WORKFLOW.*` audit rows and `OutboxEvent` rows, and call the subject handler.
+- **Jobs**: `workflow.escalate` and `workflow.unpark` every 15 minutes, `workflow.reresolve` nightly, `outbox.publish` every minute (and right after each commit when jobs run).
+- **Events** (`workflow-events.ts`) are delivered by the outbox publisher to `EventBus` listeners; `WorkflowNotifier` turns them into `Notification` rows and email.
+
+### Adding a workflow type (later phases)
+
+1. Implement `WorkflowSubjectHandler` (`modules/workflow/workflow-subject.ts`) for the type.
+2. Register it in your module's `onModuleInit`.
+3. Start a process inside your submit transaction with `engine.start(...)`; the nested `db.tx` joins your transaction, so the subject row, the process and all audit rows commit together.
+
+```ts
+// modules/leave/leave-subject.handler.ts
+@Injectable()
+export class LeaveSubjectHandler implements WorkflowSubjectHandler {
+  readonly type = 'LEAVE' as const;
+
+  constructor(private readonly audit: AuditService) {}
+
+  async describe(client: Tx, process: WorkflowProcessSnapshot): Promise<SubjectDescription> {
+    const app = await client.leaveApplication.findUniqueOrThrow({
+      where: { id: Number(process.subjectEntityId) },
+      include: { leaveType: true },
+    });
+    const units = app.unitsTaken.toFixed(4);
+    return {
+      requestLabel: app.leaveType.description, // "This Annual Leave Request …"
+      title: 'Leave request',
+      fromDate: businessFromDate(app.fromDate),
+      toDate: businessFromDate(app.toDate),
+      unitsLine: `${units} Days to be deducted`,
+      headline: [{ label: 'Days to be deducted', value: units }],
+      fields: [{ label: 'Leave type', value: app.leaveType.description } /* … */],
+      data: { referenceNumber: app.referenceNumber },
+      viewLabel: 'View leave request',
+    };
+  }
+
+  async onFinalApproval({ tx, ctx, process }: WorkflowHookContext): Promise<FinalApprovalResult> {
+    await tx.leaveApplication.update({
+      where: { id: Number(process.subjectEntityId) },
+      data: { status: process.status, approvedAt: new Date() },
+    });
+    // … audit LEAVE.APPROVED with this.audit.record(tx, ctx, {...})
+    return { outcome: 'APPLIED' }; // { outcome: 'CONFLICT', reason } for ChangeRequest conflicts
+  }
+
+  async onProcess({ tx, ctx, process, payPeriod }: WorkflowProcessHookContext): Promise<void> {
+    // post TAKEN ledger entries into payPeriod, set the application PROCESSED, audit
+  }
+
+  async onDeclined({ tx, process, comment }: WorkflowCommentHookContext): Promise<void> {
+    // release the allocations
+  }
+
+  async onCancelled({ tx, process, reason }: WorkflowCancelHookContext): Promise<void> {
+    // release the allocations; reason is WITHDRAWN or CANCELLED
+  }
+
+  // Optional: onSentBack, onResubmitted (receives the applicant's `changes`), and
+  // warnings(client, process, viewer) for the approver panel, e.g. a negative balance.
+}
+
+// modules/leave/leave.module.ts
+@Module({ imports: [WorkflowModule], providers: [LeaveSubjectHandler, LeaveService] })
+export class LeaveModule implements OnModuleInit {
+  constructor(
+    private readonly registry: WorkflowSubjectRegistry,
+    private readonly handler: LeaveSubjectHandler,
+  ) {}
+
+  onModuleInit(): void {
+    this.registry.register(this.handler);
+  }
+}
+
+// modules/leave/leave.service.ts, inside the submit transaction
+const process = await this.engine.start(ctx, {
+  type: 'LEAVE',
+  subjectEntity: 'LeaveApplication',
+  subjectEntityId: application.id,
+  subjectEmployeeId: application.employeeId,
+  summary: `${leaveType.description} ${formatGridDate(from)} to ${formatGridDate(to)}`,
+  discriminator: null, // e.g. the claim group id for GROUPEDCLAIM
+  comment: input.comment,
+});
+await tx.leaveApplication.update({
+  where: { id: application.id },
+  data: { processId: process.id, status: 'IN_PROGRESS' },
+});
+```
+
+Rules for handlers:
+
+- Hooks run inside the engine's transaction after the transition is decided (`process.status` is already the new status). Throwing rolls the whole action back.
+- Write through `hook.tx` and record your own domain audit rows (`LEAVE.APPROVED`, …); the engine writes the `WORKFLOW.*` rows.
+- Payroll types (`PAYROLL_PROCESSED_WORKFLOW_TYPES`) get `onProcess` from `POST /workflow/processes/process` or `workflow.autoProcess.{TYPE}`; other types apply their change in `onFinalApproval` and never get `onProcess`.
+- `describe` is read-only and is called for every inbox card, so keep it to one or two queries.
+- A type with no handler uses `GenericSubjectHandler`, which describes the request by its summary.
+- Use `engine.cancel(ctx, processId, { comment })` when your domain cancels a request (for example an approved leave cancellation), and `engine.reresolveForUser(userId)` from the employee termination flow.
+
+The web app links to a request at `/inbox/items/{processId}`; notifications and email use that path.
 
 ## Database roles
 
@@ -122,5 +245,6 @@ The fixtures in `test/support/` sign users in and build an authenticated agent f
 
 - `createOrg`, `createPerson` and `createRoleFixtures` (one person per role, manager A → manager B → employees, an unrelated colleague and another company) in `fixtures.ts`. Codes and usernames come from a database sequence, so they never collide between runs.
 - `login(t, person)` returns an `Agent` that sends the session cookie, the CSRF header and its own `x-forwarded-for` IP (so rate limits do not leak between tests).
-- `authz.ts` holds the authorisation-matrix runner; `test/int/authz-matrix.int.test.ts` lists the cases. Add new endpoints there.
+- `authz.ts` holds the authorisation-matrix runner; `test/int/authz-matrix.int.test.ts` (Phase 2) and `test/int/authz-matrix-workflow.int.test.ts` (Phase 3) list the cases. Add new endpoints to a matrix file for your phase.
+- `workflow.ts` holds the workflow kit: `FakeSubjectHandler` (records every hook call and describes subjects from memory), `kit.useFakeHandler(type)` (swaps it in for a real type and restores the original at the end), `kit.definition(...)` for a definition on a fixture company rule (which outranks the seeded defaults), `kit.start(...)`, `kit.payPeriod(org)`, `kit.publish()` (delivers the outbox and waits for email) and `contextFor(person)`.
 - `t.mail.outbox` / `t.mail.flush()` read email sent in memory mode; `fake-oidc.ts` is a minimal OpenID provider.

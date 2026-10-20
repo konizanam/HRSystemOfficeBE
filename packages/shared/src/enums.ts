@@ -136,6 +136,7 @@ export const STEP_STATUSES = [
   'REASSIGNED',
   'SENT_BACK',
   'CANCELLED',
+  'SUPERSEDED',
 ] as const;
 export const StepStatusSchema = z.enum(STEP_STATUSES);
 export type StepStatus = z.infer<typeof StepStatusSchema>;

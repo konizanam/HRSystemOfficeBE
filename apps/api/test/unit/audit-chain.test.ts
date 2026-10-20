@@ -142,7 +142,7 @@ describe('verifyChain', () => {
 
 describe('safety net', () => {
   function scope(): AuditScope {
-    return { tx: {}, actor: { userId: 'u1' }, entries: [], writes: [], allowBulk: false };
+    return { tx: {}, actor: { userId: 'u1' }, entries: [], writes: [], allowBulk: false, afterCommit: [] };
   }
 
   it('adds a generic DATA_CHANGE row for uncovered writes only', () => {

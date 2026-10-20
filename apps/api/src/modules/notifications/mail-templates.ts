@@ -4,11 +4,31 @@ import { resolve } from 'node:path';
 // Email templates (section 6): plain HTML in src/notifications/templates, copied to dist by the
 // Nest CLI. They carry no PII beyond the first name, the request type and a link.
 
+/** Variables of every workflow email: the first name, the request type and a link (section 6). */
+export interface WorkflowMailData {
+  firstName: string;
+  requestType: string;
+  link: string;
+}
+
 /** Variables each template needs. Add a template by adding its file and an entry here. */
 export interface MailTemplateData {
   'password-reset': { firstName: string; link: string; expiresMinutes: number };
   'password-changed': { firstName: string; link: string };
   'account-locked': { firstName: string; minutes: number; link: string };
+  'workflow-approval-required': WorkflowMailData;
+  'workflow-step-approved': WorkflowMailData;
+  'workflow-approved': WorkflowMailData;
+  'workflow-declined': WorkflowMailData;
+  'workflow-sent-back': WorkflowMailData;
+  'workflow-cancelled': WorkflowMailData;
+  'workflow-processed': WorkflowMailData;
+  'workflow-escalated': WorkflowMailData;
+  'workflow-reassigned': WorkflowMailData;
+  'workflow-delegated': WorkflowMailData;
+  'workflow-parked-due': WorkflowMailData;
+  'workflow-delegation-cycle': WorkflowMailData;
+  'workflow-conflict': WorkflowMailData;
 }
 
 export type MailTemplateName = keyof MailTemplateData;
@@ -17,6 +37,19 @@ export const MAIL_SUBJECTS: { [K in MailTemplateName]: string } = {
   'password-reset': 'Reset your PeopleHub password',
   'password-changed': 'Your PeopleHub password was changed',
   'account-locked': 'Your PeopleHub account was locked',
+  'workflow-approval-required': 'A request is waiting for your approval',
+  'workflow-step-approved': 'Your request moved to the next approver',
+  'workflow-approved': 'Your request was approved',
+  'workflow-declined': 'Your request was declined',
+  'workflow-sent-back': 'Your request was sent back to you',
+  'workflow-cancelled': 'A request was cancelled',
+  'workflow-processed': 'Your request was processed',
+  'workflow-escalated': 'A request is overdue for approval',
+  'workflow-reassigned': 'A request was reassigned to you',
+  'workflow-delegated': 'A request was sent to you while a colleague is away',
+  'workflow-parked-due': 'A parked request is back in your inbox',
+  'workflow-delegation-cycle': 'Out-of-office delegation needs attention',
+  'workflow-conflict': 'An approved change could not be applied',
 };
 
 export const TEMPLATE_DIR = resolve(__dirname, '../../notifications/templates');

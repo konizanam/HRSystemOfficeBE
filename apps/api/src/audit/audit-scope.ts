@@ -48,6 +48,8 @@ export interface AuditScope {
   writes: TrackedWrite[];
   /** Jobs that audit per row may use updateMany/deleteMany/createMany on audited models. */
   allowBulk: boolean;
+  /** Side effects to run once the outermost transaction has committed (see DbService.afterCommit). */
+  afterCommit: (() => void)[];
 }
 
 export const auditScopeStorage = new AsyncLocalStorage<AuditScope>();

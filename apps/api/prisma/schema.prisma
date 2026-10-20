@@ -113,6 +113,8 @@ enum StepStatus {
   REASSIGNED
   SENT_BACK
   CANCELLED
+  /// A sibling instance of a ROLE step (or a reassigned group) that another approver acted on first.
+  SUPERSEDED
 }
 
 enum ApproverResolution {
@@ -743,6 +745,8 @@ model WorkflowStepInstance {
   actedAt             DateTime?        @db.Timestamptz(6)
   actedByUserId       String?
   comment             String?
+  /// Set when the escalation job first notified about this overdue step (see ASSUMPTIONS).
+  escalatedAt         DateTime?        @db.Timestamptz(6)
   createdAt           DateTime         @default(now()) @db.Timestamptz(6)
   process             WorkflowProcess  @relation(fields: [processId], references: [id])
   step                WorkflowStep     @relation(fields: [stepId], references: [id])
@@ -752,6 +756,7 @@ model WorkflowStepInstance {
 
   @@index([assigneeUserId, status])
   @@index([processId, round, stepNo])
+  @@index([status, dueAt])
 }
 
 model WorkflowAction {
@@ -792,6 +797,8 @@ model OutOfOfficeRule {
   outOfOfficeId  String
   workflowTypeId Int
   nomineeUserId  String
+  /// Rules are soft-deleted when removed from the form and revived by the unique key (see ASSUMPTIONS).
+  deletedAt      DateTime?    @db.Timestamptz(6)
   outOfOffice    OutOfOffice  @relation(fields: [outOfOfficeId], references: [id])
   workflowType   WorkflowType @relation(fields: [workflowTypeId], references: [id])
   nominee        User         @relation("OOORuleNominee", fields: [nomineeUserId], references: [id])
@@ -805,6 +812,9 @@ model OutboxEvent {
   payload     Json
   createdAt   DateTime  @default(now()) @db.Timestamptz(6)
   publishedAt DateTime? @db.Timestamptz(6)
+  /// Failed delivery attempts; the publisher gives up after a fixed number (see ASSUMPTIONS).
+  attempts    Int       @default(0)
+  lastError   String?
 
   @@index([publishedAt])
 }

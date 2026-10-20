@@ -180,3 +180,17 @@ describe('enums', () => {
     expect(CLAIM_STATUS_FILTER_MAP['Cancelled / Declined']).toEqual(['CANCELLED', 'DECLINED']);
   });
 });
+
+describe('password policy', () => {
+  it('requires 10 characters and 3 of 4 classes', async () => {
+    const { passwordPolicyIssues, NewPasswordSchema } = await import('../src');
+    expect(passwordPolicyIssues('Short1!')).toHaveLength(1);
+    expect(passwordPolicyIssues('alllowercase')).toEqual([
+      'Use at least 3 of: lowercase, uppercase, digits, symbols',
+    ]);
+    expect(passwordPolicyIssues('Lowerupper1')).toEqual([]);
+    expect(passwordPolicyIssues('lower-case-9')).toEqual([]);
+    expect(NewPasswordSchema.safeParse('abc').success).toBe(false);
+    expect(NewPasswordSchema.safeParse('Valid-Pass-2026').success).toBe(true);
+  });
+});

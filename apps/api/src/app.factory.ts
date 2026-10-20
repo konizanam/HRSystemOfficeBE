@@ -7,7 +7,7 @@ import { RequestMethod } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { FastifyAdapter, type NestFastifyApplication } from '@nestjs/platform-fastify';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
-import { SESSION_COOKIE } from '@peoplehub/shared';
+import { ATTACHMENT_MAX_BYTES, ATTACHMENT_MAX_FILES_PER_UPLOAD, SESSION_COOKIE } from '@peoplehub/shared';
 import { randomUUID } from 'node:crypto';
 import { Logger } from 'nestjs-pino';
 import { cleanupOpenApiDoc } from 'nestjs-zod';
@@ -15,7 +15,8 @@ import { AppModule } from './app.module';
 import { env } from './config/env';
 import { httpRequestDuration } from './metrics/registry';
 
-export const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
+/** Section 10.4: at most 10 MB per file. */
+export const MAX_UPLOAD_BYTES = ATTACHMENT_MAX_BYTES;
 
 /** Builds the configured Nest/Fastify app. Used by main.ts and the integration tests. */
 export async function createApp(): Promise<NestFastifyApplication> {
@@ -65,7 +66,9 @@ export async function createApp(): Promise<NestFastifyApplication> {
     allowedHeaders: ['content-type', 'x-csrf-token', 'idempotency-key', 'x-request-id'],
     exposedHeaders: ['x-request-id', 'content-disposition', 'idempotent-replay'],
   });
-  await app.register(fastifyMultipart, { limits: { fileSize: MAX_UPLOAD_BYTES, files: 10 } });
+  await app.register(fastifyMultipart, {
+    limits: { fileSize: MAX_UPLOAD_BYTES, files: ATTACHMENT_MAX_FILES_PER_UPLOAD },
+  });
   // Limits are opted into per route (auth endpoints: 10/min/IP, section 10.1).
   await app.register(fastifyRateLimit, { global: false });
 

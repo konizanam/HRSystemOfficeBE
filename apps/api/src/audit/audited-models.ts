@@ -8,6 +8,7 @@ export const AUDITED_MODELS = new Set<string>([
   'Company',
   'CompanyRule',
   'PublicHoliday',
+  'HolidayRule',
   'Employee',
   'User',
   'Address',

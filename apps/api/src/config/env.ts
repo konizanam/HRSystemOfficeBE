@@ -43,6 +43,11 @@ const EnvSchema = z.object({
   OIDC_AUTO_PROVISION: bool.default(false),
   OIDC_SCOPES: z.string().default('openid profile email'),
   JOBS_ENABLED: bool.default(true),
+  /** Upload virus scanning (section 10.4): `none` (default) or `clamav` (clamd over TCP). */
+  VIRUS_SCANNER: z.enum(['none', 'clamav']).default('none'),
+  CLAMAV_HOST: z.string().default('127.0.0.1'),
+  CLAMAV_PORT: z.coerce.number().int().default(3310),
+  CLAMAV_TIMEOUT_MS: z.coerce.number().int().default(30_000),
   /** Session and CSRF cookies are Secure unless this is false (local http only). */
   COOKIE_SECURE: bool.default(true),
 });

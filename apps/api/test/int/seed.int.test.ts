@@ -6,7 +6,14 @@ import { startTestApp, type TestApp } from '../support/app';
 import { auditSince, lastAuditId, login } from '../support/fixtures';
 import { AuditService } from '../../src/audit/audit.service';
 import { DEFAULT_DEFINITION_NAME } from '../../prisma/seed/workflow';
-import { todayBusinessDate, WORKFLOW_TYPE_CODES } from '@peoplehub/shared';
+import {
+  addMonths,
+  businessFromDate,
+  startOfMonth,
+  todayBusinessDate,
+  units4,
+  WORKFLOW_TYPE_CODES,
+} from '@peoplehub/shared';
 
 describe('seed (section 14)', () => {
   let t: TestApp;
@@ -20,7 +27,7 @@ describe('seed (section 14)', () => {
   });
 
   it('is idempotent and creates the section 14 people', async () => {
-    const deps = { db: t.db, audit: t.app.get(AuditService), ctx: systemContext('seed-test') };
+    const deps = { db: t.db, audit: t.app.get(AuditService), ctx: systemContext('seed-test'), app: t.app };
     await runSeed(deps);
     const since = await lastAuditId(t.db);
     const second = await runSeed(deps);
@@ -74,5 +81,82 @@ describe('seed (section 14)', () => {
     const agent = await login(t, { username: 'employee1', password: SEED_DEV_PASSWORD });
     expect(agent.login.status).toBe('OK');
     expect((await agent.get('/session').expect(200)).body.selfEmployee.employeeCode).toBe('E000077');
+    expect(second).toMatchObject({
+      holidayRulesCreated: 0,
+      publicHolidays2026Created: 0,
+      leaveTypesCreated: 0,
+      leavePoliciesCreated: 0,
+      employee1AnnualFixture: 0,
+      employee1StudyApplications: 0,
+      leaveAccrualsPosted: 0,
+    });
+
+    // Section 14: the 12 observed leave types with their ids, codes and colours (+ leave in lieu).
+    const types = await t.db.prisma.leaveType.findMany({
+      where: { id: { lte: 13 } },
+      orderBy: { id: 'asc' },
+    });
+    expect(types.map((x) => [x.id, x.code, x.colour])).toEqual([
+      [1, 'ANN_LVE', '#C0FFC0'],
+      [2, 'SICK_LVE', '#FFFFC0'],
+      [3, 'DC_LVE', '#80FF80'],
+      [4, 'COMP_LVE', '#C0C0FF'],
+      [5, 'MAT_LVE', '#FFC0FF'],
+      [6, 'STUDY', '#FFE0C0'],
+      [7, 'PAT_LVE', '#C0FFFF'],
+      [8, 'SPORT_LVE', '#FFC080'],
+      [9, 'UNPD_LVE', null],
+      [10, 'RESET_LVE', null],
+      [11, 'LOST_LVE', '#FFC0C0'],
+      [12, 'UN_SICK', '#8080FF'],
+      [13, 'LIEU_LVE', '#E0C0FF'],
+    ]);
+    expect(types.find((x) => x.id === 13)?.isCreditLeave).toBe(true);
+    const holidays2026 = await t.db.prisma.publicHoliday.findMany({
+      where: {
+        companyId: null,
+        date: { gte: new Date('2026-01-01T00:00:00Z'), lte: new Date('2026-12-31T00:00:00Z') },
+      },
+    });
+    expect(holidays2026).toHaveLength(13);
+    expect(await t.db.prisma.holidayRule.count({ where: { companyId: null } })).toBeGreaterThanOrEqual(13);
+
+    // Section 1.7 fixtures for employee1 (E000077).
+    const buckets = await t.db.prisma.employeeLeaveEntitlement.findMany({
+      where: { employee: { entityCode: '000077' }, leaveTypeId: 1 },
+      orderBy: { cycleEndDate: 'asc' },
+    });
+    expect(buckets.map((b) => [b.kind, b.definitionName])).toEqual([
+      ['CARRY_FORWARD', 'Carry Forward Leave'],
+      ['CYCLE', 'Annual Leave'],
+    ]);
+    const cycleStart = businessFromDate(buckets[0]?.cycleStartDate ?? new Date());
+    if (cycleStart === addMonths(startOfMonth(todayBusinessDate()), -1)) {
+      // The seed first ran this month: the grid reproduces the observed figures exactly.
+      const grid = (await agent.get('/leave/balances/1/definitions').expect(200)).body;
+      expect(grid.rows.map((r: { leaveDefinition: string }) => r.leaveDefinition)).toEqual([
+        'Carry Forward Leave',
+        'Annual Leave',
+      ]);
+      expect(grid.total).toMatchObject({
+        balanceBroughtForward: '2.1691',
+        accruedThisPeriod: '1.6667',
+        takenThisPeriod: '0.0000',
+        balanceCarriedForward: '3.8358',
+      });
+    }
+    const cards = (await agent.get('/leave/balances').expect(200)).body.items;
+    expect(cards.find((c: { code: string }) => c.code === 'STUDY')).toMatchObject({
+      actualAvailable: '3.0000',
+      pending: '9.0000',
+    });
+    const study = await t.db.prisma.leaveApplication.findMany({
+      where: { employee: { entityCode: '000077' }, leaveTypeId: 6 },
+      orderBy: { id: 'asc' },
+    });
+    expect(study.map((a) => [units4(a.unitsTaken), units4(a.availableAtSubmit ?? 0)])).toEqual([
+      ['4.0000', '12.0000'],
+      ['5.0000', '8.0000'],
+    ]);
   });
 });

@@ -38,6 +38,8 @@ import { WorkflowController } from './workflow.controller';
     WorkflowEngine,
     WorkflowSubjectRegistry,
     WorkflowHistoryService,
+    WorkflowAccessService,
+    WorkflowPeopleService,
     OutOfOfficeService,
     WorkflowJobs,
   ],

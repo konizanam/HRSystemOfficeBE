@@ -10,3 +10,8 @@ export * from './api/workflow';
 export * from './api/inbox';
 export * from './api/notifications';
 export * from './api/out-of-office';
+export * from './holidays';
+export * from './api/attachments';
+export * from './api/holidays';
+export * from './api/calendar';
+export * from './api/leave';

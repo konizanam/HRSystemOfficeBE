@@ -11,6 +11,8 @@ export interface TxOptions {
   /** Allow updateMany/deleteMany on audited models (jobs that audit per row). */
   allowBulk?: boolean;
   timeoutMs?: number;
+  /** How long to wait for a pooled connection (default 10 s); bursty submits wait longer. */
+  maxWaitMs?: number;
 }
 
 /**
@@ -75,7 +77,7 @@ export class DbService implements OnModuleDestroy {
       {
         isolationLevel: options.isolationLevel,
         timeout: options.timeoutMs ?? 30_000,
-        maxWait: 10_000,
+        maxWait: options.maxWaitMs ?? 10_000,
       },
     );
     for (const effect of effects) {

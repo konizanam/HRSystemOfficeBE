@@ -217,7 +217,7 @@ export class WorkflowEngine {
    */
   async start(ctx: SecurityContext, input: StartWorkflowInput): Promise<WorkflowProcessDto> {
     return this.db.tx(ctx, async (tx) => {
-      if (!ctx.isSystem && !(await this.scope.canActFor(ctx, input.subjectEmployeeId))) {
+      if (!ctx.isSystem && !(await this.scope.canActFor(ctx, input.subjectEmployeeId, tx))) {
         throw new ForbiddenError('You cannot submit requests for this employee', {
           subjectEmployeeId: input.subjectEmployeeId,
           metadata: { workflowType: input.type },

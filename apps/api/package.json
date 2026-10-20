@@ -15,7 +15,7 @@
     "db:migrate": "node scripts/as-owner.mjs prisma migrate dev",
     "db:deploy": "node scripts/as-owner.mjs prisma migrate deploy",
     "db:reset": "node scripts/as-owner.mjs prisma migrate reset --force --skip-seed",
-    "db:seed": "tsx prisma/seed.ts",
+    "db:seed": "node -r ./scripts/swc-register.cjs prisma/seed.ts",
     "audit:verify": "tsx src/cli/audit-verify.ts",
     "keys:rotate": "tsx src/cli/keys-rotate.ts",
     "postinstall": "prisma generate"

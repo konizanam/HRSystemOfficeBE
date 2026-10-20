@@ -33,9 +33,15 @@ modules/<feature>/    one Nest module per feature (auth, workflow, leave, claims
   settings/           SettingsService: typed SystemSetting access with defaults and a cache
   notifications/      MailService (nodemailer; MAIL_TRANSPORT=memory keeps an outbox for tests), NotificationService
   workflow/           WorkflowEngine, subject registry, approver resolution, out of office, inbox, jobs, notifier
+  attachments/        uploads (magic-byte sniffer, virus scanner), owner registry, audited downloads
+  holidays/           HolidayService (stored rows + rules table, observed dates), holidays.generate job
+  leave/              policies, buckets and ledger, units, applications and cancellations, balances,
+                      leave in lieu, accrual/rollover/expiry jobs, calendar, HR admin
 notifications/templates/  plain HTML email templates (copied to dist by the Nest CLI)
 cli/                  audit-verify, keys-rotate
 ```
+
+`prisma/seed.ts` runs inside a Nest application context (the leave fixture is submitted through `LeaveService`), with jobs off and in-memory email. `pnpm db:seed` starts it through `scripts/swc-register.cjs`, which compiles TypeScript with `@swc/core` because tsx (esbuild) cannot emit the decorator metadata Nest's dependency injection needs. The other CLIs (`audit:verify`, `keys:rotate`) do not use DI and keep using tsx.
 
 ## Conventions (every module)
 
@@ -81,6 +87,8 @@ return this.db.tx(ctx, async (tx) => {
   - `assertCanAccessEmployee(ctx, employeeId, purpose)` with purpose `SELF_SERVICE` (the "Working as" rule), `TEAM`, `HR_READ`, `HR_WRITE`, `PAYROLL` or `AUDIT`; 404 when missing, 403 (audited DENIED) when out of scope.
   - `assertNotRestricted(ctx, 'PAYSLIPS')` before any feature in `workingAs.restrictedFeatures`.
   - `canActFor(ctx, employeeId)` and `reportIdsWithinDepth(managerEmployeeId, depth?)` for lists.
+  - `canAccessAny(ctx, employeeId, purposes)` / `assertCanAccessAny(...)` when several purposes may read (for example leave: self, manager, HR).
+  - Inside a transaction, pass its client as the last argument (`assertCanAccessEmployee(ctx, id, purpose, tx)`), so the check does not need a second pooled connection while the transaction holds locks.
 - Sensitive reads are decorated with `@AuditView({ what: 'PAYSLIP', entityType: 'Payslip' })`.
 
 ### Validation and errors
@@ -132,7 +140,7 @@ onFinalApproval returns CONFLICT ──▶ CONFLICT (HR is alerted)
 3. Start a process inside your submit transaction with `engine.start(...)`; the nested `db.tx` joins your transaction, so the subject row, the process and all audit rows commit together.
 
 ```ts
-// modules/leave/leave-subject.handler.ts
+// modules/leave/leave-subject.handlers.ts
 @Injectable()
 export class LeaveSubjectHandler implements WorkflowSubjectHandler {
   readonly type = 'LEAVE' as const;
@@ -223,6 +231,39 @@ Rules for handlers:
 
 The web app links to a request at `/inbox/items/{processId}`; notifications and email use that path.
 
+## Attachments
+
+`modules/attachments` implements spec section 10.4. Feature modules never write `Attachment` rows themselves.
+
+1. The client uploads first: `POST /attachments` (multipart, field `file`, up to 10 files). Each file is checked (extension, declared type, magic bytes, 10 MB, virus scan through the `VIRUS_SCANNER` provider), stored under `yyyy/mm/{uuid}` with its sha256, and recorded as **unowned**: `ownerEntity = 'Unowned'`, `ownerEntityId` = the uploader's user id. Only the uploader can download or delete it.
+2. The submit sends the ids (`attachmentIds`), and the submit transaction binds them to the new subject: `attachments.bind(tx, ctx, ids, { entity: 'LeaveApplication', entityId, subjectEmployeeId })`. An id that is not an unowned upload of the caller fails the whole submit with 422 on `attachmentIds.n`.
+3. Each module registers a resolver for its owner entities in `onModuleInit`, so the download check can find the owning employee and process:
+
+```ts
+this.owners.register('LeaveApplication', async (client, id) => {
+  const app = await client.leaveApplication.findUnique({
+    where: { id: Number(id) },
+    select: { employeeId: true, processId: true },
+  });
+  return app ? { employeeId: app.employeeId, processId: app.processId } : null;
+});
+```
+
+4. `GET /attachments/:id` allows the owning employee (or someone "Working as" them), their manager, HR/Payroll of their company and every reader of the owning process (approvers, auditors), and writes `DATA_VIEW.ATTACHMENT_DOWNLOAD`. The inbox detail lists the attachments of the subject entity (and of the process) with that download URL.
+
+## Leave
+
+`modules/leave` implements spec section 5.2.
+
+- **Policies** (`LeavePolicyService`): the most specific active policy per type (company rule over `null`); "the types the employee has a policy for" comes from here.
+- **Buckets and ledger** (`EntitlementService`): `EmployeeLeaveEntitlement` rows of kind `CYCLE`, `CARRY_FORWARD` or `CREDIT`, and the append-only `LeaveLedgerEntry` (UPDATE/DELETE are blocked by trigger and grants). Every posting goes through `entitlements.post(tx, ctx, entry, { action })`, which audits it. Leave writes for one employee lock the employee row first (`lockEmployee`), which serialises balance, overlap and allocation decisions. Buckets of the current cycle are opened lazily (submit, jobs, adjustments).
+- **Rules** (`leave-rules.ts`): pure functions for units, overlap, allocation, period figures, accrual, cycles and rollover; the unit tests pin them to the section 1.7 fixtures.
+- **Applications** (`LeaveService`, `LeaveRequestValidator`): submit validates everything in one pass (422 with field errors), reserves units through `LeaveApplicationAllocation` (earliest cycle end first) and starts the `LEAVE` workflow in the same transaction. Cancel withdraws or starts a `CANCELLEAVE` application.
+- **Handlers** (`LeaveSubjectHandler`, `CancelLeaveHandler`, `CreditLeaveHandler` for `CREDITLVEREQ`/`CREDITLVEALLOC`) keep the subject's status in step with the process; processing posts TAKEN, CANCELLATION_REVERSAL or CREDIT_ALLOCATION into the pay period.
+- **Jobs** (`LeaveJobs`): `leave.accrue` (monthly, and on the `payPeriod.closed` outbox event), `leave.cycleRollover`, `leave.creditExpiry`, `leave.carryForwardExpiry`; each takes `{ asOf?, employeeIds?, companyRuleId? }` and is idempotent. A module that closes pay periods (Phase 9) emits `payPeriod.closed` with `{ payPeriodId }` through the outbox.
+- **Calendar** (`LeaveCalendarService`): the dashboard calendar, its audited export and `onLeaveTodayCount(ctx)` for the dashboard summary.
+- **Holidays** (`modules/holidays`): `HolidayService.calendar(companyId, from, to)` gives the excluded days (observed dates included) for the unit calculation.
+
 ## Database roles
 
 | Role        | Used by                                                         | Rights                                                                                                                |
@@ -245,6 +286,7 @@ The fixtures in `test/support/` sign users in and build an authenticated agent f
 
 - `createOrg`, `createPerson` and `createRoleFixtures` (one person per role, manager A → manager B → employees, an unrelated colleague and another company) in `fixtures.ts`. Codes and usernames come from a database sequence, so they never collide between runs.
 - `login(t, person)` returns an `Agent` that sends the session cookie, the CSRF header and its own `x-forwarded-for` IP (so rate limits do not leak between tests).
-- `authz.ts` holds the authorisation-matrix runner; `test/int/authz-matrix.int.test.ts` (Phase 2) and `test/int/authz-matrix-workflow.int.test.ts` (Phase 3) list the cases. Add new endpoints to a matrix file for your phase.
+- `authz.ts` holds the authorisation-matrix runner; `test/int/authz-matrix.int.test.ts` (Phase 2), `test/int/authz-matrix-workflow.int.test.ts` (Phase 3) and `test/int/authz-matrix-leave.int.test.ts` (Phase 4) list the cases. Add new endpoints to a matrix file for your phase.
+- `leave.ts` holds the leave kit: `setup(org)` seeds the leave reference data and holidays (idempotent) and the two-step definitions of the leave workflow types on the fixture company rule; `accrue(employeeIds, asOf?)`, `monday(days)` and `range(from, units)` for future working-day ranges, `upload(agent)` and `submit(agent, body)`.
 - `workflow.ts` holds the workflow kit: `FakeSubjectHandler` (records every hook call and describes subjects from memory), `kit.useFakeHandler(type)` (swaps it in for a real type and restores the original at the end), `kit.definition(...)` for a definition on a fixture company rule (which outranks the seeded defaults), `kit.start(...)`, `kit.payPeriod(org)`, `kit.publish()` (delivers the outbox and waits for email) and `contextFor(person)`.
 - `t.mail.outbox` / `t.mail.flush()` read email sent in memory mode; `fake-oidc.ts` is a minimal OpenID provider.

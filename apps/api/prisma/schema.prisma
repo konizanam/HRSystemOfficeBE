@@ -423,6 +423,7 @@ model Employee {
   freeTextAbout        FreeTextRequest[]          @relation("FreeTextSubject")
   performanceContracts PerformanceContract[]
   reviewParticipations ReviewParticipant[]
+  reviewsAsReviewee    Review[]                   @relation("ReviewReviewee")
 
   @@index([companyId, companyRuleId])
   @@index([reportsToId])
@@ -1359,18 +1360,21 @@ model FreeTextRequest {
 
 // ───────────── Performance ─────────────
 model ParameterValue {
-  id          Int              @id @default(autoincrement())
-  tableName   String
-  code        String
-  description String
-  parentId    Int?
-  status      String           @default("A")
-  sortOrder   Int              @default(0)
-  version     Int              @default(1)
-  parent      ParameterValue?  @relation("ParamParent", fields: [parentId], references: [id])
-  children    ParameterValue[] @relation("ParamParent")
+  id            Int                       @id @default(autoincrement())
+  tableName     String
+  code          String
+  description   String
+  parentId      Int?
+  status        String                    @default("A")
+  sortOrder     Int                       @default(0)
+  version       Int                       @default(1)
+  parent        ParameterValue?           @relation("ParamParent", fields: [parentId], references: [id])
+  children      ParameterValue[]          @relation("ParamParent")
+  templateItems PerformanceTemplateItem[]
+  contractItems PerformanceContractItem[]
 
   @@unique([tableName, code])
+  @@index([tableName, parentId])
 }
 
 model RatingScale {
@@ -1378,6 +1382,7 @@ model RatingScale {
   name      String                @unique
   points    Json
   templates PerformanceTemplate[]
+  reviews   Review[]
 }
 
 model PerformanceTemplate {
@@ -1409,7 +1414,12 @@ model PerformanceTemplateItem {
   weight           Decimal             @db.Decimal(6, 2)
   target           String?
   sortOrder        Int                 @default(0)
+  /// Items removed from a draft template are soft-deleted (no hard deletes).
+  deletedAt        DateTime?           @db.Timestamptz(6)
   template         PerformanceTemplate @relation(fields: [templateId], references: [id])
+  parameterValue   ParameterValue?     @relation(fields: [parameterValueId], references: [id])
+
+  @@index([templateId])
 }
 
 model ContractInitiation {
@@ -1449,23 +1459,39 @@ model PerformanceContract {
   initiation              ContractInitiation?       @relation(fields: [initiationId], references: [id])
   items                   PerformanceContractItem[]
   reviews                 Review[]
+
+  /// One contract per employee and initiation: the initiation job is idempotent per employee.
+  @@unique([initiationId, employeeId])
+  @@index([employeeId])
+  @@index([templateId])
 }
 
 model PerformanceContractItem {
-  id         Int                 @id @default(autoincrement())
-  contractId Int
-  kind       TemplateItemKind
-  title      String
-  weight     Decimal             @db.Decimal(6, 2)
-  target     String?
-  sortOrder  Int                 @default(0)
-  contract   PerformanceContract @relation(fields: [contractId], references: [id])
-  scores     ReviewScore[]
+  id               Int                 @id @default(autoincrement())
+  contractId       Int
+  kind             TemplateItemKind
+  /// The KPA/KPI/competency parameter the item was copied from (null for objectives).
+  parameterValueId Int?
+  title            String
+  weight           Decimal             @db.Decimal(6, 2)
+  target           String?
+  sortOrder        Int                 @default(0)
+  /// Items removed from a draft contract are soft-deleted (no hard deletes).
+  deletedAt        DateTime?           @db.Timestamptz(6)
+  contract         PerformanceContract @relation(fields: [contractId], references: [id])
+  parameterValue   ParameterValue?     @relation(fields: [parameterValueId], references: [id])
+  scores           ReviewScore[]
+
+  @@index([contractId])
 }
 
 model Review {
   id              Int                  @id @default(autoincrement())
   contractId      Int?
+  /// The reviewee (one review per reviewee; also a REVIEWEE participant).
+  employeeId      Int?
+  /// The scale Total Actual is normalised to: the template's, or the chosen one for free format.
+  ratingScaleId   Int?
   name            String
   category        String
   type            String
@@ -1476,14 +1502,22 @@ model Review {
   isFreeFormat    Boolean              @default(false)
   status          ReviewStatus         @default(DRAFT)
   totalActual     Decimal?             @db.Decimal(8, 4)
+  /// When the participants were told about the review (notify mode IMMEDIATELY or SPECIFIC_DATE).
+  notifiedAt      DateTime?            @db.Timestamptz(6)
   createdByUserId String
   version         Int                  @default(1)
   createdAt       DateTime             @default(now()) @db.Timestamptz(6)
   updatedAt       DateTime             @updatedAt @db.Timestamptz(6)
   contract        PerformanceContract? @relation(fields: [contractId], references: [id])
+  employee        Employee?            @relation("ReviewReviewee", fields: [employeeId], references: [id])
+  ratingScale     RatingScale?         @relation(fields: [ratingScaleId], references: [id])
   participants    ReviewParticipant[]
   objectives      ReviewObjective[]
   scores          ReviewScore[]
+
+  @@index([status])
+  @@index([contractId])
+  @@index([employeeId])
 }
 
 model ReviewParticipant {
@@ -1493,8 +1527,14 @@ model ReviewParticipant {
   employeeId Int?
   userId     String?
   weight     Decimal?        @db.Decimal(6, 2)
+  /// Reviewers removed while the review is editable are soft-deleted (no hard deletes).
+  deletedAt  DateTime?       @db.Timestamptz(6)
   review     Review          @relation(fields: [reviewId], references: [id])
   employee   Employee?       @relation(fields: [employeeId], references: [id])
+
+  @@index([reviewId])
+  @@index([employeeId])
+  @@index([userId])
 }
 
 model ReviewObjective {
@@ -1504,8 +1544,12 @@ model ReviewObjective {
   description String?
   weight      Decimal       @db.Decimal(6, 2)
   sortOrder   Int           @default(0)
+  /// Objectives removed while the review is editable are soft-deleted (no hard deletes).
+  deletedAt   DateTime?     @db.Timestamptz(6)
   review      Review        @relation(fields: [reviewId], references: [id])
   scores      ReviewScore[]
+
+  @@index([reviewId])
 }
 
 model ReviewScore {
@@ -1520,6 +1564,8 @@ model ReviewScore {
   review         Review                   @relation(fields: [reviewId], references: [id])
   contractItem   PerformanceContractItem? @relation(fields: [contractItemId], references: [id])
   objective      ReviewObjective?         @relation(fields: [objectiveId], references: [id])
+
+  @@index([reviewId, reviewerUserId])
 }
 
 // ───────────── Platform ─────────────

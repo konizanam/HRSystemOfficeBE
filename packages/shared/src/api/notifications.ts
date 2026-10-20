@@ -23,6 +23,7 @@ export const NOTIFICATION_KINDS = [
   'LICENCE_EXPIRING',
   'PASSWORD_CHANGED',
   'ACCOUNT_LOCKED',
+  'PERFORMANCE_REVIEW',
 ] as const;
 export const NotificationKindSchema = z.enum(NOTIFICATION_KINDS);
 export type NotificationKind = z.infer<typeof NotificationKindSchema>;

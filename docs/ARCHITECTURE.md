@@ -42,6 +42,8 @@ modules/<feature>/    one Nest module per feature (auth, workflow, leave, claims
   details/            My Details: the ChangeRequest engine and handler, personal details, bank accounts
                       and banks, drivers licences (+ expiry job), family, beneficiaries and funds,
                       employee transactions (FREETEXTMANEMP), lookups, HR admin
+  performance/        parameter lookups, rating scales, templates, contract initiation (job),
+                      contracts and archive, reviews (wizard, flow, scores), results, contract reviews
 notifications/templates/  plain HTML email templates (copied to dist by the Nest CLI)
 cli/                  audit-verify, keys-rotate
 ```
@@ -304,6 +306,27 @@ final approval ──▶ ChangeRequestHandler.onFinalApproval ──▶ applier.
 - **Lookups.** `GET /lookups/:table` reads `ParameterValue` rows (tables in `LOOKUP_PARAMETER_TABLES`), seeded from the shared lists; `LookupService.assertValid` checks changed fields against the active rows.
 - **Employee transactions.** Recurring transactions are read-only; an employee input for a code HR opened is an `EmployeeTransaction` on the FREETEXTMANEMP workflow (`FreeTextManEmpHandler`).
 
+## Performance
+
+`modules/performance` implements spec section 5.9. The scoring rules and status flows are pure helpers in `packages/shared/src/performance.ts`, so the web app shows the same live totals.
+
+```
+templates ──POST /contract-initiations──▶ performance.initiateContracts (pg-boss)
+                                            └─▶ one DRAFT contract per employee (+ items), errors per employee
+contracts: DRAFT ─▶ AGREED ─▶ ACTIVE ─▶ CLOSED ─▶ ARCHIVED
+reviews:   DRAFT ─▶ OPEN ─▶ SELF_ASSESSMENT ─▶ REVIEWER_ASSESSMENT ─▶ MODERATION ─▶ COMPLETED (or CANCELLED)
+scores ──▶ participant totals (Σ rating × weight / 100, normalised) ──▶ Review.totalActual
+```
+
+- **Lookups** (`PerformanceParameterService`): the eleven parameter tables are `ParameterValue` rows (`tableName` = the table name). `GET /lookups/parameters/:table` serves the active rows (`?parentId=` for KPIs of a KPA, competencies of an area); `/admin/parameters/:table` (HR_ADMIN) writes through the My Details `LookupService.createParameterRow/updateParameterRow` and adds the parent checks.
+- **Templates** (`TemplateService`): items of kind KPA, KPI, COMPETENCY or OBJECTIVE, linked to a parameter of a matching table, with a weight and a target. `resolveItems` (in `performance-common.ts`, shared with contracts) checks ids, links and titles, and that each section (kind) adds up to 100 (422). Items change only while DRAFT; copies record `createdFromTemplateId`.
+- **Initiation** (`InitiationService`): POST resolves the employees (HR companies, company rules, employees, positions), stores them in `ContractInitiation.filters`, and sends `performance.initiateContracts`. The job creates each contract in its own transaction; the unique key `(initiationId, employeeId)` makes it idempotent, and progress (`createdCount`, `failedCount`, `errors`) is written every 25 employees. Without a running queue (tests) `JobsService.send` runs it in-process before the POST answers.
+- **Contracts** (`ContractService`): the Contracts and Archived Contracts grids, the detail with `allowedStatuses` and `canEdit`, PUT (fields while DRAFT, status moves by actor) and archive (HR).
+- **Reviews** (`ReviewService`): the wizard creates one review per reviewee (`Review.employeeId`) with REVIEWEE and REVIEWER participants, objectives and the contract (Shared Template) or objectives only (Free Format). PUT only while DRAFT or OPEN; `POST /reviews/:id/status` moves the flow (HR; the reviewee closes the self-assessment); `POST /reviews/:id/scores` stores the caller's ratings and recomputes Total Actual. Results and the contract reviews grid are filtered lists of the same rows.
+- **Notifications** (`ReviewNotifier`): Immediately on opening, Specific Date through the daily `performance.reviewNotify` job, once per review (`Review.notifiedAt`), in-app and by email (`performance-review`).
+- **Scope** (`PerformanceAccess`): HR in their companies, auditors everywhere, employees their own (reviews once opened), reviewers their participations, managers their reports, and the assignee their contract. List queries use `contractWhere`/`reviewWhere`; details check the same rules and answer 403 (audited).
+- **Seed** (`PerformanceSeedService`, also used by the test kit): the parameter tables, the "1–5" scale and one active template.
+
 ## Database roles
 
 | Role        | Used by                                                         | Rights                                                                                                                |
@@ -326,9 +349,10 @@ The fixtures in `test/support/` sign users in and build an authenticated agent f
 
 - `createOrg`, `createPerson` and `createRoleFixtures` (one person per role, manager A → manager B → employees, an unrelated colleague and another company) in `fixtures.ts`. Codes and usernames come from a database sequence, so they never collide between runs.
 - `login(t, person)` returns an `Agent` that sends the session cookie, the CSRF header and its own `x-forwarded-for` IP (so rate limits do not leak between tests).
-- `authz.ts` holds the authorisation-matrix runner; `test/int/authz-matrix.int.test.ts` (Phase 2), `test/int/authz-matrix-workflow.int.test.ts` (Phase 3), `test/int/authz-matrix-leave.int.test.ts` (Phase 4), `test/int/authz-matrix-claims.int.test.ts` (Phase 5) and `test/int/authz-matrix-details.int.test.ts` (Phase 6) list the cases. Add new endpoints to a matrix file for your phase.
+- `authz.ts` holds the authorisation-matrix runner; `test/int/authz-matrix.int.test.ts` (Phase 2), `test/int/authz-matrix-workflow.int.test.ts` (Phase 3), `test/int/authz-matrix-leave.int.test.ts` (Phase 4), `test/int/authz-matrix-claims.int.test.ts` (Phase 5), `test/int/authz-matrix-details.int.test.ts` (Phase 6) and `test/int/authz-matrix-performance.int.test.ts` (Phase 8) list the cases. Add new endpoints to a matrix file for your phase.
 - `leave.ts` holds the leave kit: `setup(org)` seeds the leave reference data and holidays (idempotent) and the two-step definitions of the leave workflow types on the fixture company rule; `accrue(employeeIds, asOf?)`, `monday(days)` and `range(from, units)` for future working-day ranges, `upload(agent)` and `submit(agent, body)`.
 - `claims.ts` holds the claims kit: `setup(org)` seeds the claim reference data (idempotent) and the GROUPEDCLAIM and CLAIMS definitions on the fixture company rule; `group()` and `type(groupId, companyRuleId, spec)` create fresh groups and types whose caps sit on the fixture company rule (so they never reach other tests); `setHourlyRate`, `upload`, `create`, `submit` and `approve`.
 - `details.ts` holds the My Details kit: `setup(org)` seeds the workflow types, lookups and banks (idempotent) and two-step definitions of BASICINF, BANKDET, DRIVERSLICENSE, BENEFICIARY and FREETEXTMANEMP on the fixture company rule; `upload(agent)`, `approve(agent, processId)` / `approveAll`, `account(person, number)` for a bank account set up directly, and `submitted(res)`.
+- `performance.ts` holds the performance kit: `setup()` seeds the parameter tables, the "1–5" scale and the seed template (idempotent); `template(hr)` creates an ACTIVE template with a unique name (KPA 60/40, competency 100); `initiate(hr, templateId, employeeIds)`, `contractOf(employeeId, templateId)`, `sharedReview(...)`, `freeReview(...)`, `move(agent, reviewId, status)` and `score(agent, review, ratings)`.
 - `workflow.ts` holds the workflow kit: `FakeSubjectHandler` (records every hook call and describes subjects from memory), `kit.useFakeHandler(type)` (swaps it in for a real type and restores the original at the end), `kit.definition(...)` for a definition on a fixture company rule (which outranks the seeded defaults), `kit.start(...)`, `kit.payPeriod(org)`, `kit.publish()` (delivers the outbox and waits for email) and `contextFor(person)`.
 - `t.mail.outbox` / `t.mail.flush()` read email sent in memory mode; `fake-oidc.ts` is a minimal OpenID provider.

@@ -22,3 +22,5 @@ export * from './lookups';
 export * from './details';
 export * from './api/lookups';
 export * from './api/details';
+export * from './performance';
+export * from './api/performance';

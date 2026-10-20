@@ -31,6 +31,7 @@ export interface MailTemplateData {
   'workflow-conflict': WorkflowMailData;
   'bank-details-changed': { firstName: string; effectiveFrom: string; link: string };
   'licence-expiring': { firstName: string; expiryDate: string; link: string };
+  'performance-review': { firstName: string; link: string };
 }
 
 export type MailTemplateName = keyof MailTemplateData;
@@ -54,6 +55,7 @@ export const MAIL_SUBJECTS: { [K in MailTemplateName]: string } = {
   'workflow-conflict': 'An approved change could not be applied',
   'bank-details-changed': 'Your bank details were changed',
   'licence-expiring': 'A drivers licence expires soon',
+  'performance-review': 'A performance review is open',
 };
 
 export const TEMPLATE_DIR = resolve(__dirname, '../../notifications/templates');

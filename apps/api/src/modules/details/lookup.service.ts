@@ -22,8 +22,36 @@ import { DbService } from '../../prisma/db.service';
 import type { Tx } from '../../prisma/prisma-client';
 
 /** `ParameterValue.status` of an active row (the performance tables use the same convention). */
-const ACTIVE = 'A';
+export const PARAMETER_ACTIVE = 'A';
+const ACTIVE = PARAMETER_ACTIVE;
 const INACTIVE = 'I';
+
+/** A new `ParameterValue` row of any parameter table (lookups and the performance tables). */
+export interface ParameterRowCreate {
+  tableName: string;
+  code: string;
+  description: string;
+  sortOrder?: number;
+  parentId?: number | null;
+}
+
+/** Changes to a `ParameterValue` row; the code never changes. */
+export interface ParameterRowUpdate {
+  version: number;
+  description?: string;
+  sortOrder?: number;
+  isActive?: boolean;
+  parentId?: number | null;
+}
+
+/** How a parameter write is audited, plus an optional check that runs inside the transaction. */
+export interface ParameterWriteOptions {
+  action: string;
+  metadata: Record<string, unknown>;
+  /** Shown in the 409 for a duplicate code, e.g. "The titles list". */
+  listLabel: string;
+  check?: (tx: Tx) => Promise<void>;
+}
 
 function toAdminDto(row: ParameterValue): AdminLookupValue {
   return {
@@ -108,36 +136,12 @@ export class LookupService {
     table: LookupTable,
     input: CreateLookupValueRequest,
   ): Promise<AdminLookupValue> {
-    return this.db.tx(ctx, async (tx) => {
-      const tableName = LOOKUP_PARAMETER_TABLES[table];
-      const existing = await tx.parameterValue.findUnique({
-        where: { tableName_code: { tableName, code: input.code } },
-      });
-      if (existing) throw new ConflictError(`The ${table} list already has the code ${input.code}`);
-      const last = await tx.parameterValue.findFirst({
-        where: { tableName },
-        orderBy: { sortOrder: 'desc' },
-        select: { sortOrder: true },
-      });
-      const row = await tx.parameterValue.create({
-        data: {
-          tableName,
-          code: input.code,
-          description: input.description,
-          sortOrder: input.sortOrder ?? (last?.sortOrder ?? 0) + 10,
-          status: ACTIVE,
-        },
-      });
-      this.audit.record(tx, ctx, {
-        category: 'DATA_CHANGE',
-        action: 'LOOKUP.CREATED',
-        entityType: 'ParameterValue',
-        entityId: row.id,
-        after: row,
-        metadata: { table },
-      });
-      return toAdminDto(row);
-    });
+    const row = await this.createParameterRow(
+      ctx,
+      { tableName: LOOKUP_PARAMETER_TABLES[table], ...input },
+      { action: 'LOOKUP.CREATED', metadata: { table }, listLabel: `The ${table} list` },
+    );
+    return toAdminDto(row);
   }
 
   async update(
@@ -146,31 +150,89 @@ export class LookupService {
     id: number,
     input: UpdateLookupValueRequest,
   ): Promise<AdminLookupValue> {
+    const row = await this.updateParameterRow(ctx, LOOKUP_PARAMETER_TABLES[table], id, input, {
+      action: 'LOOKUP.UPDATED',
+      metadata: { table },
+      listLabel: `The ${table} list`,
+    });
+    return toAdminDto(row);
+  }
+
+  // ───────────── Generic parameter rows (also used by the performance parameter tables) ─────────────
+
+  /** Creates an active row (409 on a duplicate code), sorted last unless a sort order is given. */
+  async createParameterRow(
+    ctx: SecurityContext,
+    input: ParameterRowCreate,
+    options: ParameterWriteOptions,
+  ): Promise<ParameterValue> {
+    return this.db.tx(ctx, async (tx) => {
+      const existing = await tx.parameterValue.findUnique({
+        where: { tableName_code: { tableName: input.tableName, code: input.code } },
+      });
+      if (existing) throw new ConflictError(`${options.listLabel} already has the code ${input.code}`);
+      await options.check?.(tx);
+      const last = await tx.parameterValue.findFirst({
+        where: { tableName: input.tableName },
+        orderBy: { sortOrder: 'desc' },
+        select: { sortOrder: true },
+      });
+      const row = await tx.parameterValue.create({
+        data: {
+          tableName: input.tableName,
+          code: input.code,
+          description: input.description,
+          parentId: input.parentId ?? null,
+          sortOrder: input.sortOrder ?? (last?.sortOrder ?? 0) + 10,
+          status: ACTIVE,
+        },
+      });
+      this.audit.record(tx, ctx, {
+        category: 'DATA_CHANGE',
+        action: options.action,
+        entityType: 'ParameterValue',
+        entityId: row.id,
+        after: row,
+        metadata: options.metadata,
+      });
+      return row;
+    });
+  }
+
+  /** Updates a row of `tableName` (404 for a row of another table, 409 on a stale version). */
+  async updateParameterRow(
+    ctx: SecurityContext,
+    tableName: string,
+    id: number,
+    input: ParameterRowUpdate,
+    options: ParameterWriteOptions,
+  ): Promise<ParameterValue> {
     return this.db.tx(ctx, async (tx) => {
       await this.db.lockRow(tx, 'ParameterValue', id);
       const before = await tx.parameterValue.findUnique({ where: { id } });
-      if (!before || before.tableName !== LOOKUP_PARAMETER_TABLES[table])
-        throw new NotFoundError('Lookup value');
+      if (!before || before.tableName !== tableName) throw new NotFoundError('Lookup value');
       assertVersion(before, input.version);
+      await options.check?.(tx);
       const after = await tx.parameterValue.update({
         where: { id },
         data: {
           description: input.description,
           sortOrder: input.sortOrder,
+          parentId: input.parentId,
           status: input.isActive === undefined ? undefined : input.isActive ? ACTIVE : INACTIVE,
           version: { increment: 1 },
         },
       });
       this.audit.record(tx, ctx, {
         category: 'DATA_CHANGE',
-        action: 'LOOKUP.UPDATED',
+        action: options.action,
         entityType: 'ParameterValue',
         entityId: id,
         before,
         after,
-        metadata: { table },
+        metadata: options.metadata,
       });
-      return toAdminDto(after);
+      return after;
     });
   }
 

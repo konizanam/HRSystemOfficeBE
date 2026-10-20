@@ -210,4 +210,56 @@ describe('seed (section 14)', () => {
       rateSource: 'EMPLOYEE_HOURLY_RATE',
     });
   });
+
+  it('seeds the performance parameters, the 1–5 rating scale and an active template', async () => {
+    const deps = { db: t.db, audit: t.app.get(AuditService), ctx: systemContext('seed-test'), app: t.app };
+    await runSeed(deps);
+    const second = await runSeed(deps);
+    expect(second).toMatchObject({
+      performanceParametersCreated: 0,
+      ratingScalesCreated: 0,
+      templatesCreated: 0,
+    });
+
+    const codes = async (tableName: string) =>
+      (
+        await t.db.prisma.parameterValue.findMany({ where: { tableName }, orderBy: { sortOrder: 'asc' } })
+      ).map((r) => r.code);
+    expect(await codes('ReviewCategory')).toEqual(expect.arrayContaining(['ANNUAL', 'PROBATION', 'MIDYEAR']));
+    expect(await codes('ReviewType')).toEqual(expect.arrayContaining(['SELF', 'MANAGER', '360']));
+    for (const table of [
+      'KeyPerformanceArea',
+      'KeyPerformanceIndicator',
+      'SubKeyPerformanceIndicator',
+      'CompetencyArea',
+      'Competency',
+      'SubCompetency',
+      'JobTitleType',
+      'JobGrade',
+      'LevelOfComplexity',
+    ])
+      expect((await codes(table)).length).toBeGreaterThan(0);
+    const kpi = await t.db.prisma.parameterValue.findUniqueOrThrow({
+      where: { tableName_code: { tableName: 'KeyPerformanceIndicator', code: 'FIN_BUDGET' } },
+      include: { parent: true },
+    });
+    expect(kpi.parent).toMatchObject({ tableName: 'KeyPerformanceArea', code: 'FINANCIAL' });
+
+    const scale = await t.db.prisma.ratingScale.findUniqueOrThrow({ where: { name: '1–5' } });
+    expect(scale.points).toEqual([
+      { value: 1, label: 'Unacceptable' },
+      { value: 2, label: 'Needs Improvement' },
+      { value: 3, label: 'Meets Expectations' },
+      { value: 4, label: 'Exceeds Expectations' },
+      { value: 5, label: 'Outstanding' },
+    ]);
+    const template = await t.db.prisma.performanceTemplate.findFirstOrThrow({
+      where: { name: 'Annual Performance Contract 2026' },
+      include: { items: true },
+    });
+    expect(template).toMatchObject({ status: 'ACTIVE', ratingScaleId: scale.id });
+    const totals = new Map<string, number>();
+    for (const i of template.items) totals.set(i.kind, (totals.get(i.kind) ?? 0) + Number(i.weight));
+    expect([...totals.values()].every((v) => v === 100)).toBe(true);
+  });
 });

@@ -5,8 +5,8 @@ coverage
 .env
 .env.*
 !.env.example
-storage/
-storage-test/
+apps/api/storage/
+apps/api/storage-test/
 *.log
 .DS_Store
 test-results/

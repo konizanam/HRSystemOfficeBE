@@ -25,14 +25,14 @@ export const REDACTION_POLICIES: Record<string, ModelPolicy> = {
     encrypted: {
       identityNumberEnc: 'identityNumberLast4',
       taxNumberEnc: 'taxNumberLast4',
-      passportNumberEnc: null,
-      birthCertificateNumberEnc: null,
+      passportNumberEnc: 'passportNumberLast4',
+      birthCertificateNumberEnc: 'birthCertificateNumberLast4',
     },
   },
   BankAccount: { encrypted: { accountNumberEnc: 'accountNumberLast4' } },
   DriversLicence: { encrypted: { licenceNumberEnc: 'licenceLast4' } },
   FamilyMember: { encrypted: { identityNumberEnc: 'identityNumberLast4' } },
-  Beneficiary: { encrypted: { identityNumberEnc: null } },
+  Beneficiary: { encrypted: { identityNumberEnc: 'identityNumberLast4' } },
   Attachment: {
     pick: ['id', 'fileName', 'sha256', 'sizeBytes', 'size', 'mimeType', 'ownerEntity', 'ownerEntityId'],
   },

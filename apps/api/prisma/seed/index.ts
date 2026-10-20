@@ -3,6 +3,7 @@ import type { AuditService } from '../../src/audit/audit.service';
 import type { SecurityContext } from '../../src/common/context/security-context';
 import type { DbService } from '../../src/prisma/db.service';
 import { seedClaims } from './claims';
+import { seedDetails } from './details';
 import { seedHolidays } from './holidays';
 import { seedLeave } from './leave';
 import { seedOrganisation } from './organisation';
@@ -29,5 +30,6 @@ export async function runSeed(deps: SeedDeps): Promise<SeedSummary> {
   Object.assign(summary, await seedHolidays(deps));
   Object.assign(summary, await seedLeave(deps));
   Object.assign(summary, await seedClaims(deps));
+  Object.assign(summary, await seedDetails(deps));
   return summary;
 }

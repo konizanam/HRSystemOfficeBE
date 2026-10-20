@@ -42,6 +42,7 @@ The chain is serialised with `pg_advisory_xact_lock(727274)`. The row `id` is dr
 - Passwords, password hashes, tokens, CSRF tokens and MFA secrets are stored as `"[REDACTED]"`.
 - Encrypted columns (`*Enc`) are stored as `{ "last4": "1234", "changed": true }`, never as plaintext or ciphertext.
 - Attachments are reduced to `{ id, fileName, sha256, sizeBytes }`.
+- Change requests (`ChangeRequest.proposed`) carry sensitive values sealed as `{ valueEnc, last4 }`; `valueEnc` ends in `Enc`, so the audit copy becomes `{ "last4": null, "changed": true }` next to the masked `last4`.
 - `test/unit/redact.test.ts` runs the policy against every model in the Prisma schema.
 
 ## Verifying

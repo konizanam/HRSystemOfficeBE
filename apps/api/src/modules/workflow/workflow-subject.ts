@@ -51,6 +51,17 @@ export interface SubjectDescription {
   attachmentOwners?: { entity: string; entityId: string }[];
 }
 
+/**
+ * Who is looking at a subject description. Handlers that show more to some viewers (for example
+ * an unmasked bank account number to a payroll administrator) use it; without a viewer (approval
+ * history, notifications) everything sensitive stays masked.
+ */
+export interface SubjectViewer {
+  ctx: SecurityContext;
+  /** `detail`: the inbox detail panel of one item; `card`: inbox lists. */
+  mode: 'card' | 'detail';
+}
+
 /** Passed to every lifecycle hook. Writes go through `tx` so they commit with the workflow change. */
 export interface WorkflowHookContext {
   tx: Tx;
@@ -106,7 +117,7 @@ export interface WorkflowSubjectHandler {
   readonly type: WorkflowTypeCode;
 
   /** Subject DTO for inbox cards and the detail panel. Read-only; `client` may be a transaction. */
-  describe(client: Tx, process: WorkflowProcessSnapshot): Promise<SubjectDescription>;
+  describe(client: Tx, process: WorkflowProcessSnapshot, viewer?: SubjectViewer): Promise<SubjectDescription>;
 
   /**
    * The last step was approved. Non-payroll types apply the change here (same transaction) and

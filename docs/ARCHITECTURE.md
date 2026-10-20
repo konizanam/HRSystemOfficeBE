@@ -39,6 +39,9 @@ modules/<feature>/    one Nest module per feature (auth, workflow, leave, claims
                       leave in lieu, accrual/rollover/expiry jobs, calendar, HR admin
   claims/             eligibility and setup, drafts and lines, caps and balances, submit, GROUPEDCLAIM and
                       CLAIMS handlers, My Expense Claims and its export, HR/Payroll admin
+  details/            My Details: the ChangeRequest engine and handler, personal details, bank accounts
+                      and banks, drivers licences (+ expiry job), family, beneficiaries and funds,
+                      employee transactions (FREETEXTMANEMP), lookups, HR admin
 notifications/templates/  plain HTML email templates (copied to dist by the Nest CLI)
 cli/                  audit-verify, keys-rotate
 ```
@@ -279,6 +282,28 @@ this.owners.register('LeaveApplication', async (client, id) => {
 - **Reads**: My Expense Claims (`scope` self / reports / company, the §5.3.2 status buckets from `CLAIM_STATUS_FILTER_MAP`), its audited export (`EXPORT.CLAIMS`), the Saved Claims list and the detail with the approval history. Claim readers follow the leave rule (`claim-access.ts`): self or "Working as", manager, HR/Payroll in scope, auditors, plus the process's approvers.
 - **Admin** (`ClaimAdminService`): groups, types and caps (HR_ADMIN or PAYROLL_ADMIN; deactivate, never delete; versioned) and balance adjustments (PAYROLL_ADMIN).
 
+## My Details
+
+`modules/details` implements spec section 5.4 with the ChangeRequest pattern of section 7.6. Employees never write master data: every add, change and delete becomes a `ChangeRequest` that is applied after the final approval.
+
+```
+PUT /me/personal ──▶ domain service: lock employee, check version (409), open change (409),
+                     diff (422 "No changes to submit"), validate, seal sensitive values
+                ──▶ ChangeRequestService.submit: R{entity}-{TYPE}-N{seq}, bind documents, engine.start
+final approval ──▶ ChangeRequestHandler.onFinalApproval ──▶ applier.conflict(): version drift → CONFLICT
+                                                       └──▶ applier.apply(): the same write HR edits use
+```
+
+- **Records and workflows.** `Employee` (personal details) and `FamilyMember` go through BASICINF, `BankAccount` through BANKDET, `DriversLicence` through DRIVERSLICENSE and `FundMembership` (its beneficiaries) through BENEFICIARY. One `ChangeRequestHandler` instance per type delegates to `ChangeRequestService`; each record type has a `ChangeApplier` (`PersonalDetailsService`, `BankAccountService`, `DriversLicenceService`, `FamilyService`, `BeneficiaryService`), registered in `DetailsModule.onModuleInit`.
+- **The diff.** `buildChangeDiff` (shared) keeps only the changed leaves of the form; `proposed` stores them nested like the form and `before` their old values. Sensitive values are sealed (`{ valueEnc, last4 }`, see `sealed.ts`) inside `proposed` and masked in `before`, so neither the JSON column nor the audit trail holds a plaintext number. `pnpm keys:rotate` re-seals them too.
+- **Banner data.** Every GET returns `pendingChange` per record (and `pendingCreate` for a pending add): the change request, its process id, the edited field paths and the text "Changes pending approval (Process #821)".
+- **Same write for HR.** `PersonalDetailsService.write` is used by `PUT /admin/employees/:id/personal` and by the applier, so validation and the `EMPLOYEE.PERSONAL_DETAILS_UPDATED` row are identical. An HR edit between submit and approval bumps `Employee.version`, so the change request ends in CONFLICT and the engine alerts HR.
+- **Masking.** GETs mask every number (`••••1234`). Full ID numbers come from `GET /me/personal/id-numbers`; full account numbers from the payroll-only unmask endpoints with a reason. Both are refused while working as someone else and audited. `describe` receives the viewer, so only a payroll admin in the inbox detail panel sees a proposed account number in full.
+- **Bank changes.** The new account is active from the next open pay period; the replaced account gets `isActive=false` and `effectiveTo`. The outbox event `details.bankDetailsChanged` makes `DetailsNotifier` notify and email the employee ("Your bank details were changed").
+- **Jobs.** `details.licenceExpiry` (daily 02:15) notifies the employee and HR 60 days before a licence expires, once per licence and expiry date (`LicenceExpiryNotice`).
+- **Lookups.** `GET /lookups/:table` reads `ParameterValue` rows (tables in `LOOKUP_PARAMETER_TABLES`), seeded from the shared lists; `LookupService.assertValid` checks changed fields against the active rows.
+- **Employee transactions.** Recurring transactions are read-only; an employee input for a code HR opened is an `EmployeeTransaction` on the FREETEXTMANEMP workflow (`FreeTextManEmpHandler`).
+
 ## Database roles
 
 | Role        | Used by                                                         | Rights                                                                                                                |
@@ -301,8 +326,9 @@ The fixtures in `test/support/` sign users in and build an authenticated agent f
 
 - `createOrg`, `createPerson` and `createRoleFixtures` (one person per role, manager A → manager B → employees, an unrelated colleague and another company) in `fixtures.ts`. Codes and usernames come from a database sequence, so they never collide between runs.
 - `login(t, person)` returns an `Agent` that sends the session cookie, the CSRF header and its own `x-forwarded-for` IP (so rate limits do not leak between tests).
-- `authz.ts` holds the authorisation-matrix runner; `test/int/authz-matrix.int.test.ts` (Phase 2), `test/int/authz-matrix-workflow.int.test.ts` (Phase 3) and `test/int/authz-matrix-leave.int.test.ts` (Phase 4) and `test/int/authz-matrix-claims.int.test.ts` (Phase 5) list the cases. Add new endpoints to a matrix file for your phase.
+- `authz.ts` holds the authorisation-matrix runner; `test/int/authz-matrix.int.test.ts` (Phase 2), `test/int/authz-matrix-workflow.int.test.ts` (Phase 3), `test/int/authz-matrix-leave.int.test.ts` (Phase 4), `test/int/authz-matrix-claims.int.test.ts` (Phase 5) and `test/int/authz-matrix-details.int.test.ts` (Phase 6) list the cases. Add new endpoints to a matrix file for your phase.
 - `leave.ts` holds the leave kit: `setup(org)` seeds the leave reference data and holidays (idempotent) and the two-step definitions of the leave workflow types on the fixture company rule; `accrue(employeeIds, asOf?)`, `monday(days)` and `range(from, units)` for future working-day ranges, `upload(agent)` and `submit(agent, body)`.
 - `claims.ts` holds the claims kit: `setup(org)` seeds the claim reference data (idempotent) and the GROUPEDCLAIM and CLAIMS definitions on the fixture company rule; `group()` and `type(groupId, companyRuleId, spec)` create fresh groups and types whose caps sit on the fixture company rule (so they never reach other tests); `setHourlyRate`, `upload`, `create`, `submit` and `approve`.
+- `details.ts` holds the My Details kit: `setup(org)` seeds the workflow types, lookups and banks (idempotent) and two-step definitions of BASICINF, BANKDET, DRIVERSLICENSE, BENEFICIARY and FREETEXTMANEMP on the fixture company rule; `upload(agent)`, `approve(agent, processId)` / `approveAll`, `account(person, number)` for a bank account set up directly, and `submitted(res)`.
 - `workflow.ts` holds the workflow kit: `FakeSubjectHandler` (records every hook call and describes subjects from memory), `kit.useFakeHandler(type)` (swaps it in for a real type and restores the original at the end), `kit.definition(...)` for a definition on a fixture company rule (which outranks the seeded defaults), `kit.start(...)`, `kit.payPeriod(org)`, `kit.publish()` (delivers the outbox and waits for email) and `contextFor(person)`.
 - `t.mail.outbox` / `t.mail.flush()` read email sent in memory mode; `fake-oidc.ts` is a minimal OpenID provider.

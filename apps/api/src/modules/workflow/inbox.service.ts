@@ -39,7 +39,7 @@ import {
 import { WorkflowSubjectRegistry } from './subject-registry';
 import { WorkflowAccessService } from './workflow-access.service';
 import { WorkflowHistoryService } from './workflow-history.service';
-import type { SubjectDescription } from './workflow-subject';
+import type { SubjectDescription, SubjectViewer } from './workflow-subject';
 
 /** Actions that put a process in an approver's History tab. */
 const APPROVER_ACTIONS = ['APPROVE', 'DECLINE', 'REASSIGN', 'SEND_BACK', 'PARK', 'COMMENT'] as const;
@@ -276,13 +276,17 @@ export class InboxService {
       }),
       this.db.prisma.workflowProcess.count({ where }),
     ]);
-    const items = await Promise.all(rows.map((row) => this.card(row, now)));
+    const items = await Promise.all(rows.map((row) => this.card(row, now, { ctx, mode: 'card' })));
     return { items: items.map((c) => c.card), total, page: query.page, pageSize: query.pageSize };
   }
 
-  private async card(row: CardRow, now: Date): Promise<{ card: InboxCard; description: SubjectDescription }> {
+  private async card(
+    row: CardRow,
+    now: Date,
+    viewer: SubjectViewer,
+  ): Promise<{ card: InboxCard; description: SubjectDescription }> {
     const type = typeCode(row);
-    const description = await this.registry.get(type).describe(this.db.prisma, toSnapshot(row, type));
+    const description = await this.registry.get(type).describe(this.db.prisma, toSnapshot(row, type), viewer);
     const mine = row.stepInstances.find((i) => i.round === row.round && i.stepNo === row.currentStepNo);
     const due = mine && (mine.status === 'PENDING' || (mine.parkedUntil !== null && mine.parkedUntil <= now));
     const e = row.subjectEmployee;
@@ -335,7 +339,7 @@ export class InboxService {
       include: CARD_INCLUDE(ctx.userId),
     });
     const now = new Date();
-    const { card, description } = await this.card(row, now);
+    const { card, description } = await this.card(row, now, { ctx, mode: 'detail' });
     const type = typeCode(p);
     const handler = this.registry.get(type);
     const { events, persons } = await this.history.events(prisma, p, description.requestLabel);

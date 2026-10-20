@@ -17,3 +17,8 @@ export * from './api/calendar';
 export * from './api/leave';
 export * from './claims';
 export * from './api/claims';
+export * from './countries';
+export * from './lookups';
+export * from './details';
+export * from './api/lookups';
+export * from './api/details';

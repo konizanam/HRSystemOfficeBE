@@ -29,6 +29,8 @@ export interface MailTemplateData {
   'workflow-parked-due': WorkflowMailData;
   'workflow-delegation-cycle': WorkflowMailData;
   'workflow-conflict': WorkflowMailData;
+  'bank-details-changed': { firstName: string; effectiveFrom: string; link: string };
+  'licence-expiring': { firstName: string; expiryDate: string; link: string };
 }
 
 export type MailTemplateName = keyof MailTemplateData;
@@ -50,6 +52,8 @@ export const MAIL_SUBJECTS: { [K in MailTemplateName]: string } = {
   'workflow-parked-due': 'A parked request is back in your inbox',
   'workflow-delegation-cycle': 'Out-of-office delegation needs attention',
   'workflow-conflict': 'An approved change could not be applied',
+  'bank-details-changed': 'Your bank details were changed',
+  'licence-expiring': 'A drivers licence expires soon',
 };
 
 export const TEMPLATE_DIR = resolve(__dirname, '../../notifications/templates');

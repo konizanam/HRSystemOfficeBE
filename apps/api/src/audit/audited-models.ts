@@ -43,6 +43,8 @@ export const AUDITED_MODELS = new Set<string>([
   'Payslip',
   'TaxCertificate',
   'EmployeeTransaction',
+  'PayrollTransactionCode',
+  'LicenceExpiryNotice',
   'FreeTextType',
   'FreeTextRequest',
   'ParameterValue',

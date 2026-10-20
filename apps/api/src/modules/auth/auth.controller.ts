@@ -8,6 +8,7 @@ import {
   LoginRequestSchema,
   type LoginResponse,
   LoginResponseSchema,
+  MfaDisableRequestSchema,
   MfaEnrollResponseSchema,
   MfaVerifyRequestSchema,
   OidcStartQuerySchema,
@@ -34,6 +35,7 @@ class ResetPasswordDto extends createZodDto(ResetPasswordRequestSchema) {}
 class ChangePasswordDto extends createZodDto(ChangePasswordRequestSchema) {}
 class MfaEnrollResponseDto extends createZodDto(MfaEnrollResponseSchema) {}
 class MfaVerifyDto extends createZodDto(MfaVerifyRequestSchema) {}
+class MfaDisableDto extends createZodDto(MfaDisableRequestSchema) {}
 class OidcStartQueryDto extends createZodDto(OidcStartQuerySchema) {}
 
 const FORGOT_MESSAGE = 'If the account exists and has an email address, a reset link has been sent.';
@@ -120,6 +122,15 @@ export class AuthController {
   @ApiNoContentResponse()
   async verify(@Ctx() ctx: SecurityContext, @Body() body: MfaVerifyDto): Promise<void> {
     await this.mfa.verify(ctx, body.code);
+  }
+
+  /** Turns MFA off (current password and a valid code); an admin can also reset it. */
+  @Post('mfa/disable')
+  @AuthRateLimit()
+  @HttpCode(204)
+  @ApiNoContentResponse()
+  async disableMfa(@Ctx() ctx: SecurityContext, @Body() body: MfaDisableDto): Promise<void> {
+    await this.mfa.disable(ctx, body);
   }
 
   /** Redirects to the identity provider. 404 when OIDC is not configured. */

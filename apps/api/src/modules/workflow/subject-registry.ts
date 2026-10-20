@@ -35,6 +35,8 @@ export function toSubjectDetail(description: SubjectDescription): SubjectDetail 
       return { ...base, kind: description.kind, data: description.data };
     case 'EMPLOYEE_TRANSACTION':
       return { ...base, kind: description.kind, data: description.data };
+    case 'FREE_TEXT':
+      return { ...base, kind: description.kind, data: description.data };
     default:
       return { ...base, kind: 'GENERIC', data: description.data };
   }

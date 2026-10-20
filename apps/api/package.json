@@ -18,6 +18,7 @@
     "db:seed": "node -r ./scripts/swc-register.cjs prisma/seed.ts",
     "audit:verify": "tsx src/cli/audit-verify.ts",
     "keys:rotate": "tsx src/cli/keys-rotate.ts",
+    "jobs:run": "node -r ./scripts/swc-register.cjs src/cli/jobs-run.ts",
     "postinstall": "prisma generate"
   },
   "dependencies": {

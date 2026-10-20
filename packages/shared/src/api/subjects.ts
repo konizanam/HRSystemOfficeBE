@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { ClaimSubjectDataSchema } from './claims';
 import { ChangeSubjectDataSchema, EmployeeTransactionSubjectDataSchema } from './details';
+import { FreeTextSubjectDataSchema } from './free-text';
 import { CreditLeaveSubjectDataSchema, LeaveSubjectDataSchema } from './leave';
 
 // The typed `subject.data` of the inbox detail (section 5.10), discriminated by `subject.kind`.
@@ -13,6 +14,7 @@ import { CreditLeaveSubjectDataSchema, LeaveSubjectDataSchema } from './leave';
  * - `CLAIM`: CLAIMS and GROUPEDCLAIM ({@link ClaimSubjectDataSchema});
  * - `CHANGE_REQUEST`: BASICINF, BANKDET, DRIVERSLICENSE and BENEFICIARY ({@link ChangeSubjectDataSchema});
  * - `EMPLOYEE_TRANSACTION`: FREETEXTMANEMP employee inputs ({@link EmployeeTransactionSubjectDataSchema});
+ * - `FREE_TEXT`: FREETEXT and FREETEXTMANEMP free text requests ({@link FreeTextSubjectDataSchema});
  * - `GENERIC`: every other subject; `data` is an open object (often empty).
  */
 export const SUBJECT_DATA_KINDS = [
@@ -21,6 +23,7 @@ export const SUBJECT_DATA_KINDS = [
   'CLAIM',
   'CHANGE_REQUEST',
   'EMPLOYEE_TRANSACTION',
+  'FREE_TEXT',
   'GENERIC',
 ] as const;
 export const SubjectDataKindSchema = z.enum(SUBJECT_DATA_KINDS);
@@ -60,6 +63,7 @@ export const SubjectDetailSchema = z.discriminatedUnion('kind', [
     kind: z.literal('EMPLOYEE_TRANSACTION'),
     data: EmployeeTransactionSubjectDataSchema,
   }),
+  SubjectDetailBase.extend({ kind: z.literal('FREE_TEXT'), data: FreeTextSubjectDataSchema }),
   SubjectDetailBase.extend({ kind: z.literal('GENERIC'), data: GenericSubjectDataSchema }),
 ]);
 export type SubjectDetail = z.infer<typeof SubjectDetailSchema>;
@@ -71,6 +75,7 @@ export interface SubjectDataByKind {
   CLAIM: z.infer<typeof ClaimSubjectDataSchema>;
   CHANGE_REQUEST: z.infer<typeof ChangeSubjectDataSchema>;
   EMPLOYEE_TRANSACTION: z.infer<typeof EmployeeTransactionSubjectDataSchema>;
+  FREE_TEXT: z.infer<typeof FreeTextSubjectDataSchema>;
   GENERIC: GenericSubjectData;
 }
 

@@ -13,6 +13,12 @@ import {
   type Org,
 } from '../support/fixtures';
 
+/** PUT /admin/settings with the current revision (read first, as the admin screen does). */
+async function putSettings(agent: Agent, values: Record<string, unknown>, status: number) {
+  const { revision } = (await agent.get('/admin/settings').expect(200)).body as { revision: string };
+  return agent.put('/admin/settings').send({ values, revision }).expect(status);
+}
+
 describe('system settings (section 10.5)', () => {
   let t: TestApp;
   let org: Org;
@@ -44,7 +50,7 @@ describe('system settings (section 10.5)', () => {
       const rows = await auditSince(t.db, since, { requestId: res.headers['x-request-id'] as string });
       expect(rows[0]).toMatchObject({ action: 'SECURITY.ACCESS_DENIED', outcome: 'DENIED' });
       expect(rows[0]?.metadata).toMatchObject({ requiredRoles: ['SYSTEM_ADMIN'] });
-      await agent.put('/admin/settings').send({ values: {} }).expect(403);
+      await agent.put('/admin/settings').send({ values: {}, revision: 'x' }).expect(403);
     }
   });
 
@@ -53,10 +59,7 @@ describe('system settings (section 10.5)', () => {
     const url = `https://help.example.test/${Date.now()}`;
     const since = await lastAuditId(t.db);
     try {
-      const res = await admin
-        .put('/admin/settings')
-        .send({ values: { 'ui.helpUrl': url } })
-        .expect(200);
+      const res = await putSettings(admin, { 'ui.helpUrl': url }, 200);
       expect(res.body.values['ui.helpUrl']).toBe(url);
       const item = res.body.items.find((i: { key: string }) => i.key === 'ui.helpUrl');
       expect(item).toMatchObject({ isDefault: false });
@@ -79,10 +82,7 @@ describe('system settings (section 10.5)', () => {
 
       // Saving the same value again changes nothing and audits nothing.
       const again = await lastAuditId(t.db);
-      await admin
-        .put('/admin/settings')
-        .send({ values: { 'ui.helpUrl': url } })
-        .expect(200);
+      await putSettings(admin, { 'ui.helpUrl': url }, 200);
       expect(await auditSince(t.db, again, { action: 'SECURITY.SETTING_CHANGED' })).toHaveLength(0);
     } finally {
       await t.settings.update(systemContext('test'), { 'ui.helpUrl': previous });
@@ -90,20 +90,17 @@ describe('system settings (section 10.5)', () => {
   });
 
   it('validates each value and rejects unknown keys', async () => {
-    const bad = await admin
-      .put('/admin/settings')
-      .send({ values: { 'session.idleMinutes': 0, 'ui.accentColour': 'teal' } })
-      .expect(422);
+    const bad = await putSettings(admin, { 'session.idleMinutes': 0, 'ui.accentColour': 'teal' }, 422);
     const paths = bad.body.errors.map((e: { path: string }) => e.path).sort();
     expect(paths).toEqual(['values.session.idleMinutes', 'values.ui.accentColour']);
-    await admin
-      .put('/admin/settings')
-      .send({ values: { 'no.such.setting': true } })
-      .expect(422);
+    await putSettings(admin, { 'no.such.setting': true }, 422);
+    // The revision is required.
+    const missing = await admin.put('/admin/settings').send({ values: {} }).expect(422);
+    expect(missing.body.errors.map((e: { path: string }) => e.path)).toContain('revision');
   });
 
   it('requires the CSRF token for changes', async () => {
-    await admin.put('/admin/settings', { csrf: false }).send({ values: {} }).expect(403);
+    await admin.put('/admin/settings', { csrf: false }).send({ values: {}, revision: 'x' }).expect(403);
   });
 
   it('applies session.idleMinutes to sessions immediately', async () => {
@@ -114,18 +111,44 @@ describe('system settings (section 10.5)', () => {
       data: { lastActivityAt: new Date(Date.now() - 6 * 60_000) },
     });
     try {
-      await admin
-        .put('/admin/settings')
-        .send({ values: { 'session.idleMinutes': 30 } })
-        .expect(200);
+      await putSettings(admin, { 'session.idleMinutes': 30 }, 200);
       expect((await agent.get('/session').expect(200)).body.settings.idleMinutes).toBe(30);
-      await admin
-        .put('/admin/settings')
-        .send({ values: { 'session.idleMinutes': 5 } })
-        .expect(200);
+      await putSettings(admin, { 'session.idleMinutes': 5 }, 200);
       await agent.get('/session').expect(401);
     } finally {
       await t.settings.update(systemContext('test'), { 'session.idleMinutes': previous });
+    }
+  });
+
+  it('answers 409 with the current revision when the settings changed since they were read', async () => {
+    const previous = await t.settings.get('ui.helpUrl');
+    const read = (await admin.get('/admin/settings').expect(200)).body as { revision: string };
+    expect(read.revision).toMatch(/^[0-9a-f]{32}$/);
+    try {
+      // Someone else saves first (another admin, or another API instance).
+      await t.settings.update(systemContext('test-other-admin'), {
+        'ui.helpUrl': `https://other.example.test/${Date.now()}`,
+      });
+      const since = await lastAuditId(t.db);
+      const stale = await admin
+        .put('/admin/settings')
+        .send({ values: { 'ui.helpUrl': 'https://mine.example.test/' }, revision: read.revision })
+        .expect(409);
+      expect(stale.body.current.revision).not.toBe(read.revision);
+      expect(await auditSince(t.db, since, { action: 'SECURITY.SETTING_CHANGED' })).toHaveLength(0);
+
+      // With the fresh revision the save goes through and the revision moves on.
+      const saved = await admin
+        .put('/admin/settings')
+        .send({
+          values: { 'ui.helpUrl': 'https://mine.example.test/' },
+          revision: stale.body.current.revision,
+        })
+        .expect(200);
+      expect(saved.body.values['ui.helpUrl']).toBe('https://mine.example.test/');
+      expect(saved.body.revision).not.toBe(stale.body.current.revision);
+    } finally {
+      await t.settings.update(systemContext('test'), { 'ui.helpUrl': previous });
     }
   });
 });

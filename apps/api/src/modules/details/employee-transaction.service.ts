@@ -31,6 +31,7 @@ import {
 import { DbService } from '../../prisma/db.service';
 import type { Tx } from '../../prisma/prisma-client';
 import { AttachmentService } from '../attachments/attachment.service';
+import { FREE_TEXT_ENTITY, type FreeTextService } from '../free-text/free-text.service';
 import { GenericSubjectHandler } from '../workflow/subject-registry';
 import { WorkflowEngine } from '../workflow/workflow-engine.service';
 import type {
@@ -346,18 +347,26 @@ function dto(row: TransactionRow): EmployeeTransactionDto {
 }
 
 /**
- * The FREETEXTMANEMP subject handler. Employee transaction inputs are its only subjects in this
- * phase; any other subject entity (a future free-text request) gets the generic behaviour until
- * the free-text module adds its own branch here (ASSUMPTION B107).
+ * The single FREETEXTMANEMP subject handler (ASSUMPTION B107, B200). It has two branches by
+ * subject entity: employee transaction inputs (this module) and free text requests whose type
+ * needs an "About employee" (FreeTextService, section 5.8). Any other subject entity gets the
+ * generic behaviour.
  */
 export class FreeTextManEmpHandler implements WorkflowSubjectHandler {
   readonly type = 'FREETEXTMANEMP' as const;
   private readonly generic = new GenericSubjectHandler('FREETEXTMANEMP');
 
-  constructor(private readonly transactions: EmployeeTransactionService) {}
+  constructor(
+    private readonly transactions: EmployeeTransactionService,
+    private readonly freeText: FreeTextService,
+  ) {}
 
   private mine(process: WorkflowProcessSnapshot): boolean {
     return process.subjectEntity === EMPLOYEE_TRANSACTION_ENTITY;
+  }
+
+  private isFreeText(process: WorkflowProcessSnapshot): boolean {
+    return process.subjectEntity === FREE_TEXT_ENTITY;
   }
 
   describe(
@@ -365,18 +374,22 @@ export class FreeTextManEmpHandler implements WorkflowSubjectHandler {
     process: WorkflowProcessSnapshot,
     _viewer?: SubjectViewer,
   ): Promise<SubjectDescription> {
+    if (this.isFreeText(process)) return this.freeText.describe(client, process);
     return this.mine(process)
       ? this.transactions.describe(client, process)
       : this.generic.describe(client, process);
   }
 
   onFinalApproval(hook: WorkflowHookContext): Promise<FinalApprovalResult> {
+    if (this.isFreeText(hook.process)) return this.freeText.onFinalApproval(hook);
     return this.mine(hook.process) ? this.transactions.onFinalApproval(hook) : this.generic.onFinalApproval();
   }
 
   async onProcess(_hook: WorkflowProcessHookContext): Promise<void> {}
 
-  async onDeclined({ tx, ctx, process, comment }: WorkflowCommentHookContext): Promise<void> {
+  async onDeclined(hook: WorkflowCommentHookContext): Promise<void> {
+    if (this.isFreeText(hook.process)) return this.freeText.onDeclined(hook);
+    const { tx, ctx, process, comment } = hook;
     if (!this.mine(process)) return;
     await this.transactions.setStatus(
       tx,
@@ -389,7 +402,9 @@ export class FreeTextManEmpHandler implements WorkflowSubjectHandler {
     );
   }
 
-  async onCancelled({ tx, ctx, process, reason }: WorkflowCancelHookContext): Promise<void> {
+  async onCancelled(hook: WorkflowCancelHookContext): Promise<void> {
+    if (this.isFreeText(hook.process)) return this.freeText.onCancelled(hook);
+    const { tx, ctx, process, reason } = hook;
     if (!this.mine(process)) return;
     await this.transactions.setStatus(
       tx,
@@ -400,7 +415,9 @@ export class FreeTextManEmpHandler implements WorkflowSubjectHandler {
     );
   }
 
-  async onSentBack({ tx, ctx, process, comment }: WorkflowCommentHookContext): Promise<void> {
+  async onSentBack(hook: WorkflowCommentHookContext): Promise<void> {
+    if (this.isFreeText(hook.process)) return this.freeText.onSentBack(hook);
+    const { tx, ctx, process, comment } = hook;
     if (!this.mine(process)) return;
     await this.transactions.setStatus(
       tx,
@@ -413,7 +430,9 @@ export class FreeTextManEmpHandler implements WorkflowSubjectHandler {
     );
   }
 
-  async onResubmitted({ tx, ctx, process, changes }: WorkflowResubmitHookContext): Promise<void> {
+  async onResubmitted(hook: WorkflowResubmitHookContext): Promise<void> {
+    if (this.isFreeText(hook.process)) return this.freeText.onResubmitted(hook);
+    const { tx, ctx, process, changes } = hook;
     if (!this.mine(process)) return;
     if (changes && Object.keys(changes).length > 0) {
       throw ValidationError.field('changes', 'Withdraw this input and submit a new one to change it');

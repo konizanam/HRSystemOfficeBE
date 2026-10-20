@@ -7,11 +7,14 @@ import { env } from './config/env';
 import { CoreModule } from './core.module';
 import { EventsModule } from './events/events.module';
 import { HealthController } from './health/health.controller';
+import { AdminModule } from './modules/admin/admin.module';
 import { AttachmentsModule } from './modules/attachments/attachments.module';
+import { AuditApiModule } from './modules/audit-api/audit-api.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { ClaimsModule } from './modules/claims/claims.module';
 import { DashboardModule } from './modules/dashboard/dashboard.module';
 import { DetailsModule } from './modules/details/details.module';
+import { FreeTextModule } from './modules/free-text/free-text.module';
 import { HolidaysModule } from './modules/holidays/holidays.module';
 import { LeaveModule } from './modules/leave/leave.module';
 import { LookupsModule } from './modules/lookups/lookups.module';
@@ -68,6 +71,9 @@ import { WorkflowModule } from './modules/workflow/workflow.module';
     DashboardModule,
     ReportsModule,
     LookupsModule,
+    FreeTextModule,
+    AdminModule,
+    AuditApiModule,
   ],
   controllers: [HealthController],
   providers: [

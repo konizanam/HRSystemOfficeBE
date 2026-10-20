@@ -9,9 +9,13 @@ import {
   type Settings,
 } from '@peoplehub/shared';
 import { AuditService } from '../../audit/audit.service';
+import { sha256Hex } from '../../audit/canonical-json';
 import type { SecurityContext } from '../../common/context/security-context';
-import { ValidationError } from '../../common/errors/domain-errors';
+import { ValidationError, VersionConflictError } from '../../common/errors/domain-errors';
 import { DbService } from '../../prisma/db.service';
+
+/** Advisory lock that serialises settings writes, so the revision check cannot race. */
+const SETTINGS_WRITE_LOCK = 727275;
 
 /** Other API instances pick up a change within this time; this instance sees it immediately. */
 export const SETTINGS_CACHE_TTL_MS = 30_000;
@@ -24,6 +28,18 @@ interface Snapshot {
 
 function isSettingKey(key: string): key is SettingKey {
   return Object.prototype.hasOwnProperty.call(SETTING_DEFINITIONS, key);
+}
+
+/**
+ * The optimistic concurrency token of the settings: a hash over every stored setting's key and
+ * last change. Any saved change (on any API instance) gives a new revision.
+ */
+export function settingsRevision(rows: Iterable<Pick<SystemSetting, 'key' | 'updatedAt'>>): string {
+  const parts = [...rows]
+    .filter((r) => isSettingKey(r.key))
+    .map((r) => `${r.key}@${r.updatedAt.toISOString()}`)
+    .sort();
+  return sha256Hex(parts.join('|')).slice(0, 32);
 }
 
 /**
@@ -66,9 +82,12 @@ export class SettingsService {
     this.loading = null;
   }
 
+  /** GET /admin/settings: always read fresh, so the revision is current. */
   async adminView(): Promise<AdminSettingsResponse> {
+    this.invalidate();
     const snap = await this.load();
     return {
+      revision: settingsRevision(snap.rows.values()),
       values: structuredClone(snap.values),
       items: SETTING_KEYS.map((key) => {
         const row = snap.rows.get(key);
@@ -85,9 +104,14 @@ export class SettingsService {
 
   /**
    * Writes the given keys. Values equal to the current ones are skipped, so a no-op PUT writes
-   * nothing and audits nothing. Validation runs per key against the shared schema.
+   * nothing and audits nothing. Validation runs per key against the shared schema. With
+   * `expectedRevision` (PUT /admin/settings always sends it) a stale revision answers 409.
    */
-  async update(ctx: SecurityContext, values: Partial<Settings>): Promise<AdminSettingsResponse> {
+  async update(
+    ctx: SecurityContext,
+    values: Partial<Settings>,
+    expectedRevision?: string,
+  ): Promise<AdminSettingsResponse> {
     const errors: { path: string; message: string }[] = [];
     const changes: { key: SettingKey; value: unknown }[] = [];
     for (const [key, raw] of Object.entries(values)) {
@@ -106,6 +130,16 @@ export class SettingsService {
 
     try {
       await this.db.tx(ctx, async (tx) => {
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(${SETTINGS_WRITE_LOCK})`;
+        if (expectedRevision !== undefined) {
+          const stored = await tx.systemSetting.findMany({ select: { key: true, updatedAt: true } });
+          const current = settingsRevision(stored);
+          if (current !== expectedRevision) {
+            throw new VersionConflictError('The settings were changed by someone else; reload', {
+              revision: current,
+            });
+          }
+        }
         for (const { key, value } of changes) {
           const row = await tx.systemSetting.findUnique({ where: { key } });
           const stored = row ? resolveSetting(key, row.value) : undefined;

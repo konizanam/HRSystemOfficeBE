@@ -26,6 +26,6 @@ export class SettingsController {
   @Put()
   @ApiOkResponse({ type: AdminSettingsDto })
   update(@Ctx() ctx: SecurityContext, @Body() body: UpdateSettingsDto): Promise<AdminSettingsDto> {
-    return this.settings.update(ctx, body.values);
+    return this.settings.update(ctx, body.values, body.revision);
   }
 }

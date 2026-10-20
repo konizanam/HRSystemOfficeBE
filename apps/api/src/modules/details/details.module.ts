@@ -3,6 +3,8 @@ import { JobsService } from '../../jobs/jobs.service';
 import { AttachmentOwnerRegistry } from '../attachments/attachment-owners';
 import { AttachmentsModule } from '../attachments/attachments.module';
 import { AuthModule } from '../auth/auth.module';
+import { FreeTextModule } from '../free-text/free-text.module';
+import { FreeTextService } from '../free-text/free-text.service';
 import { WorkflowSubjectRegistry } from '../workflow/subject-registry';
 import { WorkflowModule } from '../workflow/workflow.module';
 import { BankAccountService } from './bank-account.service';
@@ -32,7 +34,7 @@ import { ReferenceController } from './reference.controller';
  * payroll inputs through FREETEXTMANEMP. Also the lookups, banks and the HR admin endpoints.
  */
 @Module({
-  imports: [AuthModule, WorkflowModule, AttachmentsModule],
+  imports: [AuthModule, WorkflowModule, AttachmentsModule, FreeTextModule],
   controllers: [DetailsController, ReferenceController, DetailsAdminController],
   providers: [
     DetailsAccess,
@@ -61,6 +63,7 @@ export class DetailsModule implements OnModuleInit {
     private readonly family: FamilyService,
     private readonly beneficiaries: BeneficiaryService,
     private readonly transactions: EmployeeTransactionService,
+    private readonly freeText: FreeTextService,
   ) {}
 
   onModuleInit(): void {
@@ -70,7 +73,8 @@ export class DetailsModule implements OnModuleInit {
     for (const type of CHANGE_REQUEST_WORKFLOW_TYPES) {
       this.registry.register(new ChangeRequestHandler(type, this.changes));
     }
-    this.registry.register(new FreeTextManEmpHandler(this.transactions));
+    // One FREETEXTMANEMP handler: employee transaction inputs and "about employee" free text.
+    this.registry.register(new FreeTextManEmpHandler(this.transactions, this.freeText));
 
     this.owners.register(CHANGE_REQUEST_ENTITY, async (client, id) => {
       const cr = await client.changeRequest.findUnique({

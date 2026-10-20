@@ -31,3 +31,6 @@ export * from './api/tax';
 export * from './api/dashboard';
 export * from './api/reports';
 export * from './api/subjects';
+export * from './api/admin';
+export * from './api/audit';
+export * from './api/free-text';

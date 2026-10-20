@@ -4,6 +4,7 @@ import type { SecurityContext } from '../../src/common/context/security-context'
 import type { DbService } from '../../src/prisma/db.service';
 import { seedClaims } from './claims';
 import { seedDetails } from './details';
+import { seedFreeText } from './free-text';
 import { seedHolidays } from './holidays';
 import { seedLeave } from './leave';
 import { seedOrganisation } from './organisation';
@@ -33,6 +34,7 @@ export async function runSeed(deps: SeedDeps): Promise<SeedSummary> {
   Object.assign(summary, await seedLeave(deps));
   Object.assign(summary, await seedClaims(deps));
   Object.assign(summary, await seedDetails(deps));
+  Object.assign(summary, await seedFreeText(deps));
   Object.assign(summary, await seedPerformance(deps));
   Object.assign(summary, await seedPayroll(deps));
   return summary;

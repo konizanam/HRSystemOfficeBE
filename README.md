@@ -39,6 +39,19 @@ This repository holds the back end of PeopleHub ESS, an Employee Self-Service sy
 
 The Docker stack (`docker compose up`) runs Postgres, Mailpit, MinIO, the API and the web app. The web app is built from `../HRSystemOfficeFE`.
 
+## What the API covers
+
+| Area                          | Endpoints (under `/api/v1`)                                                                                                                                                                                            |
+| ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Auth and session              | `/auth/*` (local, OIDC, password reset, MFA enrol/verify/disable), `/session`, "Working as"                                                                                                                            |
+| Self-service                  | `/dashboard`, `/leave`, `/claims`, `/me` (My Details), `/payslips`, `/tax-certificates`, `/free-text`, `/performance`, `/reports`                                                                                      |
+| Approvals                     | `/inbox`, `/workflow/processes/*`, `/profile/out-of-office`, `/notifications`                                                                                                                                          |
+| Administration (HR, Payroll)  | `/admin/employees` (+ terminate, photo, CSV import), companies, company rules, holidays, workflow definitions, free text types, leave and claims set-up, banks, funds, lookups, pay periods (+ close), payroll imports |
+| Administration (system admin) | `/admin/users` (roles, activation, unlock, password and MFA resets), `/admin/settings`                                                                                                                                 |
+| Audit                         | `/audit` explorer, row detail, record history of any entity, chain verification, audited export                                                                                                                        |
+
+The OpenAPI document at `/api/docs` lists every route with its request and response schemas (the Zod contracts in `packages/shared/src/api`).
+
 ## Quality gates
 
 ```bash
@@ -46,6 +59,16 @@ pnpm lint && pnpm typecheck && pnpm test   # unit tests (90% coverage on shared)
 pnpm test:int                              # integration tests against TEST_DATABASE_URL (or Testcontainers)
 pnpm audit:verify                          # recompute the audit hash chain
 ```
+
+## Operations
+
+```bash
+pnpm keys:rotate                           # re-encrypt every encrypted field to ENCRYPTION_ACTIVE_KEY
+pnpm jobs:run                              # list the background jobs
+pnpm jobs:run leave.accrue '{"asOf":"2026-11-01"}'   # re-run one job now (audited SYSTEM.JOB_RUN)
+```
+
+Backups, the restore drill, key rotation, audit anchors, OIDC set-up and every environment variable are described in [docs/RUNBOOK.md](docs/RUNBOOK.md).
 
 ## Documentation
 

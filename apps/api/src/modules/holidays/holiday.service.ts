@@ -92,6 +92,8 @@ export class HolidayService implements OnModuleInit {
       const rule = row.ruleId !== null ? ruleById.get(row.ruleId) : undefined;
       if (row.ruleId !== null) storedRuleYears.add(`${row.ruleId}:${yearOf(date)}`);
       storedKeys.add(`${row.companyId ?? ''}:${date}`);
+      // A deleted row is not a holiday, but it still stops its rule from filling that year in.
+      if (row.deletedAt !== null) continue;
       items.push({
         date,
         observedDate: holidayObservedDate(date, rule?.observeSundayOnMonday ?? true),
@@ -142,7 +144,8 @@ export class HolidayService implements OnModuleInit {
 
   /**
    * Stores the rule dates of `year` as PublicHoliday rows (idempotent: a rule that already has a
-   * row that year, or a date that already has a holiday, is skipped). Every row is audited.
+   * row that year, or a date that already has a holiday, is skipped; a row HR deleted counts, so
+   * a removed holiday is not brought back). Every row is audited.
    */
   async generateYear(ctx: SecurityContext, year: number): Promise<{ created: number; skipped: number }> {
     return this.db.tx(ctx, async (tx) => {

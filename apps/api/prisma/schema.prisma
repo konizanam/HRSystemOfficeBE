@@ -280,6 +280,9 @@ model Company {
   currency         String          @default("NAD")
   country          String          @default("NA")
   logoAttachmentId String?
+  /// Phase 9: deactivated companies take no new employees or company rules (no hard deletes).
+  isActive         Boolean         @default(true)
+  version          Int             @default(1)
   createdAt        DateTime        @default(now()) @db.Timestamptz(6)
   updatedAt        DateTime        @updatedAt @db.Timestamptz(6)
   rules            CompanyRule[]
@@ -293,6 +296,11 @@ model CompanyRule {
   companyId           Int
   code                String
   description         String
+  /// Phase 9 additions (see ASSUMPTIONS): deactivation instead of deletion, and versioning.
+  isActive            Boolean              @default(true)
+  version             Int                  @default(1)
+  createdAt           DateTime             @default(now()) @db.Timestamptz(6)
+  updatedAt           DateTime             @default(now()) @updatedAt @db.Timestamptz(6)
   company             Company              @relation(fields: [companyId], references: [id])
   employees           Employee[]
   payPeriods          PayPeriod[]
@@ -310,6 +318,12 @@ model PublicHoliday {
   name      String
   /// Set when the row was generated from a holiday rule (one row per rule and year).
   ruleId    Int?
+  /// Phase 9 additions: versioning and soft delete. A deleted row still suppresses its rule's
+  /// date for that year (HR removed it on purpose).
+  version   Int          @default(1)
+  createdAt DateTime     @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime     @default(now()) @updatedAt @db.Timestamptz(6)
+  deletedAt DateTime?    @db.Timestamptz(6)
   company   Company?     @relation(fields: [companyId], references: [id])
   rule      HolidayRule? @relation(fields: [ruleId], references: [id])
 
@@ -727,21 +741,28 @@ model WorkflowType {
 }
 
 model WorkflowDefinition {
-  id             Int               @id @default(autoincrement())
-  workflowTypeId Int
-  companyRuleId  Int?
-  discriminator  String?
-  name           String
-  versionNo      Int               @default(1)
-  isActive       Boolean           @default(true)
-  allowReassign  Boolean           @default(true)
-  allowResubmit  Boolean           @default(true)
-  canPark        Boolean           @default(true)
-  createdAt      DateTime          @default(now()) @db.Timestamptz(6)
-  workflowType   WorkflowType      @relation(fields: [workflowTypeId], references: [id])
-  companyRule    CompanyRule?      @relation(fields: [companyRuleId], references: [id])
-  steps          WorkflowStep[]
-  processes      WorkflowProcess[]
+  id                Int                  @id @default(autoincrement())
+  workflowTypeId    Int
+  companyRuleId     Int?
+  discriminator     String?
+  name              String
+  versionNo         Int                  @default(1)
+  isActive          Boolean              @default(true)
+  allowReassign     Boolean              @default(true)
+  allowResubmit     Boolean              @default(true)
+  canPark           Boolean              @default(true)
+  createdAt         DateTime             @default(now()) @db.Timestamptz(6)
+  /// Phase 9 additions (see ASSUMPTIONS): optimistic concurrency, and the definition this one
+  /// replaced. Editing a definition creates a new version; running processes keep theirs.
+  version           Int                  @default(1)
+  updatedAt         DateTime             @default(now()) @updatedAt @db.Timestamptz(6)
+  previousVersionId Int?
+  workflowType      WorkflowType         @relation(fields: [workflowTypeId], references: [id])
+  companyRule       CompanyRule?         @relation(fields: [companyRuleId], references: [id])
+  previousVersion   WorkflowDefinition?  @relation("DefinitionVersions", fields: [previousVersionId], references: [id])
+  nextVersions      WorkflowDefinition[] @relation("DefinitionVersions")
+  steps             WorkflowStep[]
+  processes         WorkflowProcess[]
 }
 
 model WorkflowStep {
@@ -1226,6 +1247,12 @@ model PayPeriod {
   endDate              DateTime              @db.Date
   payDate              DateTime?             @db.Date
   isClosed             Boolean               @default(false)
+  /// Phase 9 additions: versioning and who closed the period (the close emits payPeriod.closed).
+  closedAt             DateTime?             @db.Timestamptz(6)
+  closedByUserId       String?
+  version              Int                   @default(1)
+  createdAt            DateTime              @default(now()) @db.Timestamptz(6)
+  updatedAt            DateTime              @default(now()) @updatedAt @db.Timestamptz(6)
   companyRule          CompanyRule           @relation(fields: [companyRuleId], references: [id])
   payslips             Payslip[]
   leaveApplications    LeaveApplication[]
@@ -1352,24 +1379,34 @@ model FreeTextType {
   description             String
   requiresSubjectEmployee Boolean           @default(false)
   isActive                Boolean           @default(true)
+  /// Phase 9 additions: versioning.
+  version                 Int               @default(1)
+  createdAt               DateTime          @default(now()) @db.Timestamptz(6)
+  updatedAt               DateTime          @default(now()) @updatedAt @db.Timestamptz(6)
   requests                FreeTextRequest[]
 }
 
 model FreeTextRequest {
-  id              Int              @id @default(autoincrement())
-  referenceNumber String           @unique
-  typeId          Int
-  applicantId     Int
-  aboutEmployeeId Int?
-  body            String
-  status          ProcessStatus    @default(DRAFT)
-  processId       Int?             @unique
-  version         Int              @default(1)
-  createdAt       DateTime         @default(now()) @db.Timestamptz(6)
-  type            FreeTextType     @relation(fields: [typeId], references: [id])
-  applicant       Employee         @relation("FreeTextApplicant", fields: [applicantId], references: [id])
-  aboutEmployee   Employee?        @relation("FreeTextSubject", fields: [aboutEmployeeId], references: [id])
-  process         WorkflowProcess? @relation(fields: [processId], references: [id])
+  id                Int              @id @default(autoincrement())
+  referenceNumber   String           @unique
+  typeId            Int
+  applicantId       Int
+  aboutEmployeeId   Int?
+  body              String
+  status            ProcessStatus    @default(DRAFT)
+  processId         Int?             @unique
+  version           Int              @default(1)
+  createdAt         DateTime         @default(now()) @db.Timestamptz(6)
+  /// Phase 9 additions: who submitted (the applicant or someone "Working as" them) and when.
+  submittedByUserId String?
+  submittedAt       DateTime?        @db.Timestamptz(6)
+  updatedAt         DateTime         @default(now()) @updatedAt @db.Timestamptz(6)
+  type              FreeTextType     @relation(fields: [typeId], references: [id])
+  applicant         Employee         @relation("FreeTextApplicant", fields: [applicantId], references: [id])
+  aboutEmployee     Employee?        @relation("FreeTextSubject", fields: [aboutEmployeeId], references: [id])
+  process           WorkflowProcess? @relation(fields: [processId], references: [id])
+
+  @@index([applicantId, status])
 }
 
 // ───────────── Performance ─────────────

@@ -56,8 +56,13 @@ describe('settings contract', () => {
   });
 
   it('validates updates per key and rejects unknown keys', () => {
+    expect(
+      UpdateSettingsRequestSchema.safeParse({ values: { 'session.idleMinutes': 30 }, revision: 'abc' })
+        .success,
+    ).toBe(true);
+    // The optimistic concurrency revision is required.
     expect(UpdateSettingsRequestSchema.safeParse({ values: { 'session.idleMinutes': 30 } }).success).toBe(
-      true,
+      false,
     );
     expect(UpdateSettingsRequestSchema.safeParse({ values: { 'session.idleMinutes': 0 } }).success).toBe(
       false,

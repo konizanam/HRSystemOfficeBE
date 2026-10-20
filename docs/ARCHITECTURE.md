@@ -49,9 +49,14 @@ modules/<feature>/    one Nest module per feature (auth, workflow, leave, claims
   dashboard/          widget layout, summary, upcoming birthdays
   reports/            report registry, scope, runner and streaming writers; definitions/ per group
   lookups/            scoped pickers: GET /lookups/employees, companies, company-rules, positions
+  free-text/          Free Text Workflow: requests, types (HR), the FREETEXT handler and the hooks the
+                      FREETEXTMANEMP handler calls for free text subjects
+  admin/              companies, company rules, holidays and rules, employees (HR fields, terminate,
+                      photo, CSV import), users (SYSTEM_ADMIN), workflow definitions, pay periods
+  audit-api/          audit explorer, row detail, record history, verify and audited export
 pdf/                  PdfService (pdfmake, embedded Roboto) and the document definitions
 notifications/templates/  plain HTML email templates (copied to dist by the Nest CLI)
-cli/                  audit-verify, keys-rotate
+cli/                  audit-verify, keys-rotate, jobs-run (JobsService.runNow for one job)
 ```
 
 `prisma/seed.ts` runs inside a Nest application context (the leave fixture is submitted through `LeaveService`), with jobs off and in-memory email. `pnpm db:seed` starts it through `scripts/swc-register.cjs`, which compiles TypeScript with `@swc/core` because tsx (esbuild) cannot emit the decorator metadata Nest's dependency injection needs. The other CLIs (`audit:verify`, `keys:rotate`) do not use DI and keep using tsx.
@@ -312,7 +317,7 @@ final approval ──▶ ChangeRequestHandler.onFinalApproval ──▶ applier.
 - **Bank changes.** The new account is active from the next open pay period; the replaced account gets `isActive=false` and `effectiveTo`. The outbox event `details.bankDetailsChanged` makes `DetailsNotifier` notify and email the employee ("Your bank details were changed").
 - **Jobs.** `details.licenceExpiry` (daily 02:15) notifies the employee and HR 60 days before a licence expires, once per licence and expiry date (`LicenceExpiryNotice`).
 - **Lookups.** `GET /lookups/:table` reads `ParameterValue` rows (tables in `LOOKUP_PARAMETER_TABLES`), seeded from the shared lists; `LookupService.assertValid` checks changed fields against the active rows.
-- **Employee transactions.** Recurring transactions are read-only; an employee input for a code HR opened is an `EmployeeTransaction` on the FREETEXTMANEMP workflow (`FreeTextManEmpHandler`).
+- **Employee transactions.** Recurring transactions are read-only; an employee input for a code HR opened is an `EmployeeTransaction` on the FREETEXTMANEMP workflow (`FreeTextManEmpHandler`). That handler is the only FREETEXTMANEMP handler: it also has a branch for `FreeTextRequest` subjects, which calls `FreeTextService` (see [Free text workflow](#free-text-workflow)).
 
 ## Performance
 
@@ -423,6 +428,49 @@ export const overtimeHours = defineReport('OVERTIME_HOURS', async function* (rc,
 
 3. Always filter people through `rc.employees` (or `employee: rc.employees` on child tables), read in batches with Prisma cursor pagination, return decimals as strings, dates as `YYYY-MM-DD` and timestamps as ISO (`day`, `ts`, `dec4`, `money`), and mark payslip amounts `payData`. Add the code to the report tests; `reports.int.test.ts` runs every catalogue code as JSON and CSV.
 
+## Free text workflow
+
+`modules/free-text` implements spec section 5.8.
+
+- **Submit** (`POST /free-text`, idempotent): "the application is for" the acting-as employee or another employee the caller may act for (`ScopeService.canActFor`); "who is applying for" an active `FreeTextType`; a required body and attachments (owner `FreeTextRequest`). One transaction locks the applicant, allocates `F{entity}-N{seq}` from the applicant's free text sequence, writes the request (audited `FREE_TEXT.SUBMITTED`), binds the files and starts the workflow with discriminator `FT:{code}`.
+- **Two workflow types.** A type with `requiresSubjectEmployee` runs on **FREETEXTMANEMP** and needs the "About employee" (an employee of the applicant's company, from `GET /free-text/about-options`); the others run on **FREETEXT**. Neither needs payroll, so the last approval makes the request PROCESSED.
+- **Handlers.** `FreeTextHandler` (FREETEXT) and the FreeTextRequest branch of the details module's `FreeTextManEmpHandler` both delegate to `FreeTextService`: `describe` (the type as the request label, the body, the about-employee as a headline), status sync on approve, decline, withdraw, cancel and send back, and a resubmission that may edit the body.
+- **Reads.** `GET /free-text` (the acting-as employee's requests; `scope=company` for HR and auditors) and `GET /free-text/:id` for the applicant, their manager, HR/Payroll in scope, auditors and the process's readers.
+- **Types.** `/admin/free-text-types` (HR_ADMIN): create, update with the version, deactivate. The workflow type of a type with requests is fixed. The seed adds `ONBOARD_ARRIVAL` "Onboarding Arrival Update".
+
+## Admin API
+
+`modules/admin` holds the section 12.10 endpoints the feature modules do not own; leave, claims, banks, funds, lookups, transaction codes, parameters, the payroll imports and settings stay in their modules. Every write runs in `db.tx`, locks the row, checks the `version` (409), writes before/after audit rows, and deactivates or soft-deletes instead of deleting.
+
+| Area                 | Service                          | Roles and scope                                                                            |
+| -------------------- | -------------------------------- | ------------------------------------------------------------------------------------------ |
+| Companies, rules     | `OrganisationAdminService`       | HR_ADMIN writes within its companies (`admin-scope.ts`); HR, Payroll and SYSTEM_ADMIN read |
+| Holidays and rules   | `HolidayAdminService`            | HR_ADMIN; national rows (company null) any HR admin, a company's rows its HR               |
+| Employees            | `EmployeeAdminService`           | HR_ADMIN writes (`HR_WRITE`), HR and Payroll read (`HR_READ`)                              |
+| Employee import      | `EmployeeImportService`          | HR_ADMIN; dry run, then commit with the dry run's token                                    |
+| Users                | `UserAdminService`               | SYSTEM_ADMIN                                                                               |
+| Workflow definitions | `WorkflowDefinitionAdminService` | HR_ADMIN; type-wide definitions any HR admin, a company rule's its HR                      |
+| Pay periods          | `PayPeriodAdminService`          | PAYROLL_ADMIN of the company rule's company                                                |
+
+- **Termination** (`POST /admin/employees/:id/terminate`): one transaction sets TERMINATED and the date, ends the login's sessions and deactivates it (setting `employees.deactivateUserOnTermination`); after it commits, `WorkflowEngine.reresolveForUser` moves every open step of the login (as SYSTEM, audited REASSIGN). User deactivation and employee suspension do the same.
+- **Workflow definitions** are versioned, never edited: a PUT creates `versionNo + 1` with `previousVersionId` and its own steps and deactivates the edited row. Processes reference their definition (and step rows) by id, so a running process keeps its approval path. Step validation is the shared `workflowStepIssues`.
+- **Pay period close** writes the `payPeriod.closed` outbox event in the closing transaction; the leave module's listener queues `leave.accrue` for the next period.
+- **Employee photo**: an image upload bound to owner `EmployeePhoto` (resolver in `AdminModule`), so `GET /attachments/:id` serves it under the employee's read rules and the dashboard `photoUrl` works.
+- **Import** re-parses the file inside the commit transaction (nothing may have changed since the dry run), creates employees in file order, resolves managers that appear later in the file in a second pass, then creates or updates the logins. Every row is audited, unchanged rows included.
+- **Settings** (`modules/settings`): `GET /admin/settings` returns a `revision`; `PUT` must send it back (409 when stale).
+
+## Audit API
+
+`modules/audit-api` implements sections 9.7 and 12.11; the details are in [AUDIT.md](AUDIT.md).
+
+- `AuditApiService` reads `AuditLog` with raw SQL built from Prisma fragments (`audit-query.ts`: `auditConditions`), because the free-text filter searches `metadata::text`. Rows are mapped per viewer: `toAuditRow` for the grid, `toAuditDetail` with the snapshots, pay data blanked for system admins who are not HR, Payroll or auditors (`hidesPayData`), and the request plumbing hidden from non-auditors.
+- `EntityHistoryAccess` decides who may open a record history: one owner resolver per entity type (the Prisma model name) finds the owning employee, its workflow processes or the roles that manage a configuration table, then applies `ScopeService` and `WorkflowAccessService`. A module that adds an entity type adds a resolver there.
+- The export streams through the report writers (`csvStream`, `xlsxStream`) after writing `EXPORT.AUDIT`.
+
+## Operations
+
+Backups, the restore drill, key rotation, audit verification and anchors, re-running jobs (`pnpm jobs:run`), the database roles, the environment variables and OIDC set-up are in [RUNBOOK.md](RUNBOOK.md).
+
 ## Database roles
 
 | Role        | Used by                                                         | Rights                                                                                                                |
@@ -430,7 +478,7 @@ export const overtimeHours = defineReport('OVERTIME_HOURS', async function* (rc,
 | `app_owner` | migrations (`node scripts/as-owner.mjs prisma …`), schema owner | everything                                                                                                            |
 | `app_user`  | the API, seed, CLIs, tests                                      | CRUD on business tables; SELECT and INSERT only on `AuditLog`, `AuditAnchor`, `LeaveLedgerEntry` and `WorkflowAction` |
 
-To add a migration, edit `prisma/schema.prisma` and run `pnpm --filter @peoplehub/api db:migrate --name <name>` (runs `migrate dev` as the owner). Raw SQL (triggers, checks, partial indexes) goes in a `--create-only` migration that you then edit. `prisma migrate reset` is never part of a script or test.
+To add a migration, edit `prisma/schema.prisma` and run `pnpm --filter @peoplehub/api db:migrate --name <name>` (runs `migrate dev` as the owner). The folder must sort after the newest migration: when the clock is behind, create it with `--create-only`, rename the folder, then apply it. Raw SQL (triggers, checks, partial indexes) goes in a `--create-only` migration that you then edit. `prisma migrate reset` is never part of a script or test.
 
 ## Testing
 
@@ -445,7 +493,7 @@ The fixtures in `test/support/` sign users in and build an authenticated agent f
 
 - `createOrg`, `createPerson` and `createRoleFixtures` (one person per role, manager A → manager B → employees, an unrelated colleague and another company) in `fixtures.ts`. Codes and usernames come from a database sequence, so they never collide between runs.
 - `login(t, person)` returns an `Agent` that sends the session cookie, the CSRF header and its own `x-forwarded-for` IP (so rate limits do not leak between tests).
-- `authz.ts` holds the authorisation-matrix runner; `test/int/authz-matrix.int.test.ts` (Phase 2), `test/int/authz-matrix-workflow.int.test.ts` (Phase 3), `test/int/authz-matrix-leave.int.test.ts` (Phase 4), `test/int/authz-matrix-claims.int.test.ts` (Phase 5), `test/int/authz-matrix-details.int.test.ts` (Phase 6), `test/int/authz-matrix-payroll.int.test.ts` (Phase 7) and `test/int/authz-matrix-performance.int.test.ts` (Phase 8) list the cases. Add new endpoints to a matrix file for your phase.
+- `authz.ts` holds the authorisation-matrix runner; `test/int/authz-matrix.int.test.ts` (Phase 2), `test/int/authz-matrix-workflow.int.test.ts` (Phase 3), `test/int/authz-matrix-leave.int.test.ts` (Phase 4), `test/int/authz-matrix-claims.int.test.ts` (Phase 5), `test/int/authz-matrix-details.int.test.ts` (Phase 6), `test/int/authz-matrix-payroll.int.test.ts` (Phase 7) and `test/int/authz-matrix-performance.int.test.ts` (Phase 8) and `test/int/authz-matrix-admin.int.test.ts` (Phase 9: admin, free text, audit API, MFA disable) list the cases. Add new endpoints to a matrix file for your phase.
 - `leave.ts` holds the leave kit: `setup(org)` seeds the leave reference data and holidays (idempotent) and the two-step definitions of the leave workflow types on the fixture company rule; `accrue(employeeIds, asOf?)`, `monday(days)` and `range(from, units)` for future working-day ranges, `upload(agent)` and `submit(agent, body)`.
 - `claims.ts` holds the claims kit: `setup(org)` seeds the claim reference data (idempotent) and the GROUPEDCLAIM and CLAIMS definitions on the fixture company rule; `group()` and `type(groupId, companyRuleId, spec)` create fresh groups and types whose caps sit on the fixture company rule (so they never reach other tests); `setHourlyRate`, `upload`, `create`, `submit` and `approve`.
 - `details.ts` holds the My Details kit: `setup(org)` seeds the workflow types, lookups and banks (idempotent) and two-step definitions of BASICINF, BANKDET, DRIVERSLICENSE, BENEFICIARY and FREETEXTMANEMP on the fixture company rule; `upload(agent)`, `approve(agent, processId)` / `approveAll`, `account(person, number)` for a bank account set up directly, and `submitted(res)`.

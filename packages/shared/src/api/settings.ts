@@ -99,6 +99,11 @@ export const SETTING_DEFINITIONS = {
     default: null,
     description: 'External help link in the profile menu',
   },
+  'employees.deactivateUserOnTermination': {
+    schema: z.boolean(),
+    default: true,
+    description: "Deactivate the employee's login when HR terminates the employee",
+  },
 } as const;
 
 type Definitions = typeof SETTING_DEFINITIONS;
@@ -136,11 +141,17 @@ export type SettingItem = z.infer<typeof SettingItemSchema>;
 export const AdminSettingsResponseSchema = z.object({
   values: SettingsSchema,
   items: z.array(SettingItemSchema),
+  /**
+   * Optimistic concurrency token over every stored setting (its key and last change). Send it
+   * back with PUT; a stale one answers 409 with the current settings.
+   */
+  revision: z.string(),
 });
 export type AdminSettingsResponse = z.infer<typeof AdminSettingsResponseSchema>;
 
-/** PUT /admin/settings: only the keys being changed. Unknown keys are rejected. */
+/** PUT /admin/settings: only the keys being changed, and the `revision` that was read. Unknown keys are rejected. */
 export const UpdateSettingsRequestSchema = z.object({
   values: SettingsSchema.partial().strict(),
+  revision: z.string().min(1, 'Reload the settings before saving'),
 });
 export type UpdateSettingsRequest = z.infer<typeof UpdateSettingsRequestSchema>;

@@ -219,6 +219,13 @@ export const MfaVerifyRequestSchema = z.object({
 });
 export type MfaVerifyRequest = z.infer<typeof MfaVerifyRequestSchema>;
 
+/** POST /auth/mfa/disable: the user turns MFA off with their current password and a current code. */
+export const MfaDisableRequestSchema = z.object({
+  currentPassword: z.string().min(1, 'Current password is required').max(500),
+  code: z.string().regex(/^\d{6}$/, 'Enter the 6-digit code'),
+});
+export type MfaDisableRequest = z.infer<typeof MfaDisableRequestSchema>;
+
 /** POST /profile/mobile/pairing: QR content for "Setup mobile" (ASSUMPTION A3). */
 export const MobilePairingResponseSchema = z.object({
   serverUrl: z.string(),

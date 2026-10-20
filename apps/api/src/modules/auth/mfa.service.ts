@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import type { MfaEnrollResponse } from '@peoplehub/shared';
+import type { MfaDisableRequest, MfaEnrollResponse } from '@peoplehub/shared';
 import { authenticator } from 'otplib';
 import { toDataURL } from 'qrcode';
 import { AuditService } from '../../audit/audit.service';
@@ -7,6 +7,7 @@ import type { SecurityContext } from '../../common/context/security-context';
 import { ConflictError, ValidationError } from '../../common/errors/domain-errors';
 import { EncryptionService } from '../../crypto/encryption.service';
 import { DbService } from '../../prisma/db.service';
+import { PasswordService } from './password.service';
 
 export const MFA_ISSUER = 'PeopleHub';
 
@@ -33,6 +34,7 @@ export class MfaService {
     private readonly db: DbService,
     private readonly audit: AuditService,
     private readonly encryption: EncryptionService,
+    private readonly passwords: PasswordService,
   ) {}
 
   async enroll(ctx: SecurityContext): Promise<MfaEnrollResponse> {
@@ -89,6 +91,55 @@ export class MfaService {
         subjectEmployeeId: user.employeeId,
         before: user,
         after,
+      });
+    });
+  }
+
+  /**
+   * POST /auth/mfa/disable: the signed-in user turns MFA off with their current password and a
+   * valid code (both checked, so a stolen session alone cannot remove the second factor). A
+   * wrong password or code is audited AUTH.MFA_DISABLE_FAILED and answers 422.
+   */
+  async disable(ctx: SecurityContext, input: MfaDisableRequest): Promise<void> {
+    const user = await this.db.prisma.user.findUniqueOrThrow({ where: { id: ctx.userId } });
+    if (!user.mfaEnabledAt || !user.mfaSecretEnc) {
+      throw new ConflictError('Multi-factor sign-in is not enabled');
+    }
+    const passwordOk =
+      !!user.passwordHash && (await this.passwords.verify(user.passwordHash, input.currentPassword));
+    const codeOk = passwordOk && this.checkCode(user, input.code);
+    if (!passwordOk || !codeOk) {
+      await this.audit.recordStandalone(ctx, {
+        category: 'AUTH',
+        action: 'AUTH.MFA_DISABLE_FAILED',
+        outcome: 'FAILURE',
+        entityType: 'User',
+        entityId: user.id,
+        subjectEmployeeId: user.employeeId,
+        reason: !passwordOk ? 'Current password is incorrect' : 'The code is not valid',
+      });
+      throw !passwordOk
+        ? ValidationError.field('currentPassword', 'Your current password is incorrect')
+        : ValidationError.field(
+            'code',
+            'The code is not valid. Check the time on your device and try again.',
+          );
+    }
+    await this.db.tx(ctx, async (tx) => {
+      const before = await tx.user.findUniqueOrThrow({ where: { id: user.id } });
+      const after = await tx.user.update({
+        where: { id: user.id },
+        data: { mfaSecretEnc: null, mfaEnabledAt: null, version: { increment: 1 } },
+      });
+      this.audit.record(tx, ctx, {
+        category: 'AUTH',
+        action: 'AUTH.MFA_DISABLED',
+        entityType: 'User',
+        entityId: user.id,
+        subjectEmployeeId: user.employeeId,
+        before,
+        after,
+        metadata: { via: 'SELF_SERVICE' },
       });
     });
   }

@@ -249,6 +249,11 @@ export type UpdateClaimRequest = z.infer<typeof UpdateClaimRequestSchema>;
  * The editable fields when a sent-back claim is resubmitted
  * (`POST /workflow/processes/:id/resubmit` with `changes`). Omitted fields keep their value;
  * `lines`, when given, replaces the lines as in PUT /claims/:id.
+ *
+ * A 422 of the resubmit points at lines by index, counted from 0 in the order of `changes.lines`
+ * as sent: `changes.lines.{i}.…` for the edits themselves, `lines.{i}.…` for the submit checks and
+ * the caps, and the cap findings' `lineIndex` / `lineIndexes` (ClaimCapProblem). When `lines` is
+ * left out, the indexes count the saved lines in the order the claim detail lists them.
  */
 export const ClaimResubmitChangesSchema = z
   .object({
@@ -309,8 +314,10 @@ export const ClaimCapWarningSchema = z.object({
   message: z.string(),
   /**
    * Index (in the claim's `lines`, 0-based) of the first line counted against the cap; a BLOCK
-   * error's path is `lines.{lineIndex}.amount` or `.quantity`. Null on warnings stored before
-   * this field existed.
+   * error's path is `lines.{lineIndex}.amount` or `.quantity`. The lines are those of the request
+   * that was checked, in the order they were sent: the body of POST /claims or PUT /claims/:id, or
+   * `changes.lines` of a resubmit (a resubmit without `changes.lines` checks the saved lines, in
+   * the order the claim detail lists them). Null on warnings stored before this field existed.
    */
   lineIndex: z.number().int().nullable().default(null),
   /** The saved line's id (null for an unsaved line or an older stored warning). */
@@ -414,6 +421,12 @@ export const ClaimDetailSchema = ClaimRowSchema.extend({
    * withdraw), without reading the inbox first. Null for a draft.
    */
   processVersion: z.number().int().nullable(),
+  /**
+   * The caller may resubmit the claim now (`POST /workflow/processes/:id/resubmit` with
+   * `changes`): true only for the applicant (or someone working as them) or the person who
+   * submitted it, while the process is RESUBMIT_REQUIRED. Show the resubmit editor from this.
+   */
+  canResubmit: z.boolean(),
 });
 export type ClaimDetail = z.infer<typeof ClaimDetailSchema>;
 

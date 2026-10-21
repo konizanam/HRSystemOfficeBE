@@ -140,6 +140,13 @@ export const InboxCardSchema = z.object({
   canAct: z.boolean(),
   /** Link text, e.g. "View leave request". */
   viewLabel: z.string(),
+  /**
+   * The record the request is about: its Prisma model name (e.g. `LeaveApplication`,
+   * `ChangeRequest`) and id, as the audit rows use them. Open its record history with
+   * `GET /audit/entity/{subjectEntity}/{subjectEntityId}`.
+   */
+  subjectEntity: z.string(),
+  subjectEntityId: z.string(),
 });
 export type InboxCard = z.infer<typeof InboxCardSchema>;
 
@@ -222,6 +229,9 @@ export type InboxWarning = z.infer<typeof InboxWarningSchema>;
 /** GET /inbox/items/:processId: the right-hand detail panel. */
 export const InboxItemDetailSchema = z.object({
   card: InboxCardSchema,
+  /** The record the request is about (the same values as on the card), for its record history. */
+  subjectEntity: z.string(),
+  subjectEntityId: z.string(),
   /** The request itself; `subject.kind` tells the shape of `subject.data` (see subjects.ts). */
   subject: SubjectDetailSchema,
   submittedBy: WorkflowPersonSchema,

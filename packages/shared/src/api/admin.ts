@@ -164,6 +164,14 @@ export const UpdatePublicHolidayRequestSchema = z.object({
 });
 export type UpdatePublicHolidayRequest = z.infer<typeof UpdatePublicHolidayRequestSchema>;
 
+/**
+ * `POST /admin/public-holidays/:id/restore` (body: the version read) brings a deleted holiday
+ * back as it was (audited `HOLIDAY.RESTORED`); 422 when it is not deleted. Adding the same date
+ * again still restores the row too, with the new name.
+ */
+export const RestorePublicHolidayRequestSchema = AdminVersionRequestSchema;
+export type RestorePublicHolidayRequest = z.infer<typeof RestorePublicHolidayRequestSchema>;
+
 export const HolidayRuleKindSchema = z.enum(HOLIDAY_RULE_KINDS);
 
 export const AdminHolidayRuleSchema = z.object({
@@ -655,6 +663,16 @@ export const UpdateWorkflowStepsRequestSchema = z
   .object({ steps: z.array(WorkflowStepInputSchema), version: z.number().int().positive() })
   .superRefine(stepsCheck);
 export type UpdateWorkflowStepsRequest = z.infer<typeof UpdateWorkflowStepsRequestSchema>;
+
+/**
+ * `GET /admin/workflow-definitions/user-options?search=` (HR_ADMIN): who a SPECIFIC_USER step
+ * may name. Active logins whose employee is ACTIVE in one of the caller's companies, plus active
+ * logins without an employee record (for example a shared approvals mailbox); never the system
+ * user. The caller is included. Same query and response as `GET /workflow/user-options`
+ * (`UserOptionsQuerySchema`, `UserOptionsResponseSchema`: at most `USER_OPTIONS_LIMIT` rows,
+ * `truncated` when more match, so narrow the search).
+ */
+export const WORKFLOW_STEP_USER_OPTIONS_PATH = '/admin/workflow-definitions/user-options';
 
 // ───────────── Pay periods ─────────────
 

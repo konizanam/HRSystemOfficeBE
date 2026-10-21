@@ -205,6 +205,40 @@ export class HolidayAdminService {
     });
   }
 
+  /**
+   * POST /admin/public-holidays/:id/restore: brings a deleted holiday back as it was. 422 when it
+   * is not deleted; 409 when another row now holds the date (an update moved one onto it).
+   */
+  async restoreHoliday(ctx: SecurityContext, id: number, version: number): Promise<AdminPublicHoliday> {
+    return this.db.tx(ctx, async (tx) => {
+      const before = await this.lockHoliday(tx, ctx, id);
+      assertVersion(before, version);
+      if (!before.deletedAt) throw ValidationError.field('', 'This holiday is not deleted');
+      const clash = await tx.publicHoliday.findFirst({
+        where: { companyId: before.companyId, date: before.date, id: { not: id }, deletedAt: null },
+      });
+      if (clash) {
+        throw new ConflictError(
+          `${businessFromDate(before.date)} is already a public holiday (${clash.name})`,
+        );
+      }
+      const after = await tx.publicHoliday.update({
+        where: { id },
+        data: { deletedAt: null, version: { increment: 1 } },
+        include: { rule: true },
+      });
+      this.audit.record(tx, ctx, {
+        category: 'DATA_CHANGE',
+        action: 'HOLIDAY.RESTORED',
+        entityType: 'PublicHoliday',
+        entityId: id,
+        before: plainHoliday(before),
+        after: plainHoliday(after),
+      });
+      return holidayDto(after);
+    });
+  }
+
   // ───────────── Rules ─────────────
 
   async listRules(companyId?: number): Promise<AdminHolidayRulesResponse> {

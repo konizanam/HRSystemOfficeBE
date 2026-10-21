@@ -9,13 +9,22 @@ import {
   ChangeOperationSchema,
   type ContactType,
   ContactTypeSchema,
+  EmployeeStatusSchema,
   PostalServiceTypeSchema,
   ProcessStatusSchema,
   PROCESS_STATUSES,
   WorkflowTypeCodeSchema,
 } from '../enums';
 import { AttachmentIdsSchema, AttachmentSchema } from './attachments';
-import { BusinessDateSchema, DecimalStringSchema, TimestampSchema, VersionSchema } from './common';
+import { BooleanQuerySchema } from './calendar';
+import {
+  BusinessDateSchema,
+  DecimalStringSchema,
+  pageOf,
+  SearchTextSchema,
+  TimestampSchema,
+  VersionSchema,
+} from './common';
 
 // Contracts for My Details (sections 5.4 and 12.5): personal details, bank details, drivers
 // licences, family, beneficiaries and employee transactions. Every employee change becomes a
@@ -961,9 +970,55 @@ export const AdminFundMembershipSchema = z.object({
   employeeId: z.number().int(),
   memberNumber: nullableString,
   startDate: BusinessDateSchema.nullable(),
+  /** The last day of the membership once HR ended it; null while it is open. */
+  endDate: BusinessDateSchema.nullable(),
   version: z.number().int(),
 });
 export type AdminFundMembership = z.infer<typeof AdminFundMembershipSchema>;
+
+/**
+ * GET /admin/retirement-funds/:id/memberships (HR_ADMIN): the fund's members in the caller's
+ * companies, by surname. `search` matches the employee's name or code and the member number;
+ * ended memberships are listed only with `includeEnded=true`.
+ */
+export const AdminFundMembershipsQuerySchema = z.object({
+  search: SearchTextSchema,
+  includeEnded: BooleanQuerySchema.optional(),
+  page: z.coerce.number().int().min(1).default(1),
+  pageSize: z.coerce.number().int().min(1).max(100).default(25),
+});
+export type AdminFundMembershipsQuery = z.infer<typeof AdminFundMembershipsQuerySchema>;
+
+/** A row of the fund's membership list. */
+export const AdminFundMemberSchema = AdminFundMembershipSchema.extend({
+  employeeCode: z.string(),
+  /** "{First} {Last}". */
+  employeeName: z.string(),
+  employeeStatus: EmployeeStatusSchema,
+  /** False once the end date has passed (the employee no longer sees the fund). */
+  isActive: z.boolean(),
+  beneficiaryCount: z.number().int(),
+});
+export type AdminFundMember = z.infer<typeof AdminFundMemberSchema>;
+
+export const AdminFundMembershipsResponseSchema = pageOf(AdminFundMemberSchema);
+export type AdminFundMembershipsResponse = z.infer<typeof AdminFundMembershipsResponseSchema>;
+
+export const FundMembershipParamSchema = z.object({
+  id: z.coerce.number().int().positive(),
+  membershipId: z.coerce.number().int().positive(),
+});
+export type FundMembershipParam = z.infer<typeof FundMembershipParamSchema>;
+
+/**
+ * POST /admin/retirement-funds/:id/memberships/:membershipId/end: ends the membership on
+ * `endDate` (default today, never before the start date). The row is kept (no hard delete); the
+ * employee stops seeing the fund after that day. Enrolling the employee again reopens it.
+ */
+export const EndFundMembershipRequestSchema = VersionSchema.extend({
+  endDate: BusinessDateSchema.optional(),
+});
+export type EndFundMembershipRequest = z.infer<typeof EndFundMembershipRequestSchema>;
 
 // ───────────── Employee transactions (section 5.4.6, ASSUMPTION A17) ─────────────
 

@@ -298,10 +298,16 @@ export class EmployeeTransactionService {
     });
   }
 
+  /** DELETE /admin/transaction-codes/:id: deactivates the code (no hard deletes). */
+  deactivateCode(ctx: SecurityContext, id: number, version: number): Promise<AdminTransactionCode> {
+    return this.updateCode(ctx, id, { version, isActive: false }, true);
+  }
+
   async updateCode(
     ctx: SecurityContext,
     id: number,
     input: UpdateTransactionCodeRequest,
+    deactivating = false,
   ): Promise<AdminTransactionCode> {
     return this.db.tx(ctx, async (tx) => {
       await this.db.lockRow(tx, 'PayrollTransactionCode', id);
@@ -315,7 +321,7 @@ export class EmployeeTransactionService {
       });
       this.audit.record(tx, ctx, {
         category: 'DATA_CHANGE',
-        action: 'TRANSACTION_CODE.UPDATED',
+        action: deactivating ? 'TRANSACTION_CODE.DEACTIVATED' : 'TRANSACTION_CODE.UPDATED',
         entityType: 'PayrollTransactionCode',
         entityId: id,
         before,

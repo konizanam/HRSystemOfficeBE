@@ -66,7 +66,22 @@ export class PickerService {
 
   /** GET /lookups/employees: paginated, never truncated. */
   async employees(ctx: SecurityContext, query: EmployeePickerQuery): Promise<EmployeePickerResponse> {
-    const and: Prisma.EmployeeWhereInput[] = [await this.employeeScope(ctx)];
+    return this.employeePage(await this.employeeScope(ctx), query);
+  }
+
+  /**
+   * GET /audit/employee-options (AUDITOR, SYSTEM_ADMIN): every employee, of every company and
+   * status, soft-deleted ones included, because the audit trail still names them.
+   */
+  auditEmployees(query: EmployeePickerQuery): Promise<EmployeePickerResponse> {
+    return this.employeePage({}, query);
+  }
+
+  private async employeePage(
+    scope: Prisma.EmployeeWhereInput,
+    query: EmployeePickerQuery,
+  ): Promise<EmployeePickerResponse> {
+    const and: Prisma.EmployeeWhereInput[] = [scope];
     if (query.companyId !== undefined) and.push({ companyId: query.companyId });
     if (query.companyRuleId !== undefined) and.push({ companyRuleId: query.companyRuleId });
     if (query.status !== undefined) and.push({ status: query.status });

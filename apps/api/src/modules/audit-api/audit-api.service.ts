@@ -3,6 +3,8 @@ import { Prisma } from '@prisma/client';
 import {
   AUDIT_EXPORT_COLUMNS,
   AUDIT_EXPORT_MAX_ROWS,
+  type AuditActorOptionsQuery,
+  type AuditActorOptionsResponse,
   type AuditExportRequest,
   type AuditFilters,
   type AuditListQuery,
@@ -73,11 +75,71 @@ export class AuditApiService {
         LIMIT ${pageSize} OFFSET ${(page - 1) * pageSize}`,
       this.db.prisma.$queryRaw<{ total: bigint }[]>`SELECT count(*) AS total FROM "AuditLog" ${where}`,
     ]);
+    const names = await this.employeeNames(rows.flatMap((r) => [r.actingAsEmployeeId, r.subjectEmployeeId]));
+    const nameOf = (id: number | null) => (id === null ? null : (names.get(id) ?? null));
     return {
-      items: rows.map((r) => toAuditRow(r, ctx)),
+      items: rows.map((r) => ({
+        ...toAuditRow(r, ctx),
+        actingAsEmployeeName: nameOf(r.actingAsEmployeeId),
+        subjectEmployeeName: nameOf(r.subjectEmployeeId),
+      })),
       total: Number(count[0]?.total ?? 0),
       page,
       pageSize,
+    };
+  }
+
+  /** "{First} {Last}" by employee id, read now (deleted employees included). */
+  private async employeeNames(ids: (number | null)[]): Promise<Map<number, string>> {
+    const unique = [...new Set(ids.filter((id): id is number => id !== null))];
+    if (unique.length === 0) return new Map();
+    const rows = await this.db.prisma.employee.findMany({
+      where: { id: { in: unique } },
+      select: { id: true, firstName: true, lastName: true },
+    });
+    return new Map(rows.map((e) => [e.id, `${e.firstName} ${e.lastName}`]));
+  }
+
+  /** GET /audit/actor-options: every login for the actor filter, by username (paginated). */
+  async actorOptions(query: AuditActorOptionsQuery): Promise<AuditActorOptionsResponse> {
+    const where: Prisma.UserWhereInput = {};
+    if (query.search) {
+      const contains = { contains: query.search, mode: 'insensitive' as const };
+      where.OR = [
+        { username: contains },
+        { employee: { firstName: contains } },
+        { employee: { lastName: contains } },
+        { employee: { employeeCode: contains } },
+      ];
+    }
+    const prisma = this.db.prisma;
+    const [rows, total] = await Promise.all([
+      prisma.user.findMany({
+        where,
+        select: {
+          id: true,
+          username: true,
+          isActive: true,
+          employee: { select: { id: true, employeeCode: true, firstName: true, lastName: true } },
+        },
+        orderBy: [{ username: 'asc' }, { id: 'asc' }],
+        skip: (query.page - 1) * query.pageSize,
+        take: query.pageSize,
+      }),
+      prisma.user.count({ where }),
+    ]);
+    return {
+      items: rows.map((u) => ({
+        userId: u.id,
+        username: u.username,
+        name: u.employee ? `${u.employee.firstName} ${u.employee.lastName}` : u.username,
+        employeeId: u.employee?.id ?? null,
+        employeeCode: u.employee?.employeeCode ?? null,
+        isActive: u.isActive,
+      })),
+      total,
+      page: query.page,
+      pageSize: query.pageSize,
     };
   }
 

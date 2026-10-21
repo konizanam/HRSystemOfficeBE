@@ -249,7 +249,7 @@ Rules for handlers:
 - A type with no handler uses `GenericSubjectHandler`, which describes the request by its summary.
 - Use `engine.cancel(ctx, processId, { comment })` when your domain cancels a request (for example an approved leave cancellation), and `engine.reresolveForUser(userId)` from the employee termination flow.
 
-The web app links to a request at `/inbox/items/{processId}`; notifications and email use that path.
+The web app links to a request at `/inbox/items/{processId}`; notifications and email use that path. The card and the detail carry `subjectEntity` and `subjectEntityId` (the process's subject record), which is the record history target of the request (B250).
 
 ## Attachments
 
@@ -316,7 +316,8 @@ final approval ──▶ ChangeRequestHandler.onFinalApproval ──▶ applier.
 - **Masking.** GETs mask every number (`••••1234`). Full ID numbers come from `GET /me/personal/id-numbers`; full account numbers from the payroll-only unmask endpoints with a reason. Both are refused while working as someone else and audited. `describe` receives the viewer, so only a payroll admin in the inbox detail panel sees a proposed account number in full.
 - **Bank changes.** The new account is active from the next open pay period; the replaced account gets `isActive=false` and `effectiveTo`. The outbox event `details.bankDetailsChanged` makes `DetailsNotifier` notify and email the employee ("Your bank details were changed").
 - **Jobs.** `details.licenceExpiry` (daily 02:15) notifies the employee and HR 60 days before a licence expires, once per licence and expiry date (`LicenceExpiryNotice`).
-- **Lookups.** `GET /lookups/:table` reads `ParameterValue` rows (tables in `LOOKUP_PARAMETER_TABLES`), seeded from the shared lists; `LookupService.assertValid` checks changed fields against the active rows.
+- **Lookups.** `GET /lookups/:table` reads `ParameterValue` rows (tables in `LOOKUP_PARAMETER_TABLES`), seeded from the shared lists; `LookupService.assertValid` checks changed fields against the active rows. `DELETE /admin/lookups/:table/:id` and `DELETE /admin/transaction-codes/:id` deactivate (B254).
+- **Fund memberships.** HR enrols (`POST /admin/retirement-funds/:id/memberships`), lists (`GET …/memberships`, the members in HR's companies) and ends a membership (`POST …/memberships/:membershipId/end`): `FundMembership.endDate` is set and the row kept; after that day the employee no longer sees the fund, and enrolling again reopens the row (B251, B252).
 - **Employee transactions.** Recurring transactions are read-only; an employee input for a code HR opened is an `EmployeeTransaction` on the FREETEXTMANEMP workflow (`FreeTextManEmpHandler`). That handler is the only FREETEXTMANEMP handler: it also has a branch for `FreeTextRequest` subjects, which calls `FreeTextService` (see [Free text workflow](#free-text-workflow)).
 
 ## Performance
@@ -453,6 +454,8 @@ export const overtimeHours = defineReport('OVERTIME_HOURS', async function* (rc,
 | Pay periods          | `PayPeriodAdminService`          | PAYROLL_ADMIN of the company rule's company                                                |
 
 - **Termination** (`POST /admin/employees/:id/terminate`): one transaction sets TERMINATED and the date, ends the login's sessions and deactivates it (setting `employees.deactivateUserOnTermination`); after it commits, `WorkflowEngine.reresolveForUser` moves every open step of the login (as SYSTEM, audited REASSIGN). User deactivation and employee suspension do the same.
+- **SPECIFIC_USER picker**: `GET /admin/workflow-definitions/user-options` (`WorkflowPeopleService.stepUserOptions`) lists active users of HR's companies plus users without an employee record (B253).
+- **Holiday restore**: `POST /admin/public-holidays/:id/restore` brings a deleted holiday back (B255).
 - **Workflow definitions** are versioned, never edited: a PUT creates `versionNo + 1` with `previousVersionId` and its own steps and deactivates the edited row. Processes reference their definition (and step rows) by id, so a running process keeps its approval path. Step validation is the shared `workflowStepIssues`.
 - **Pay period close** writes the `payPeriod.closed` outbox event in the closing transaction; the leave module's listener queues `leave.accrue` for the next period.
 - **Employee photo**: an image upload bound to owner `EmployeePhoto` (resolver in `AdminModule`), so `GET /attachments/:id` serves it under the employee's read rules and the dashboard `photoUrl` works.
@@ -466,6 +469,7 @@ export const overtimeHours = defineReport('OVERTIME_HOURS', async function* (rc,
 - `AuditApiService` reads `AuditLog` with raw SQL built from Prisma fragments (`audit-query.ts`: `auditConditions`), because the free-text filter searches `metadata::text`. Rows are mapped per viewer: `toAuditRow` for the grid, `toAuditDetail` with the snapshots, pay data blanked for system admins who are not HR, Payroll or auditors (`hidesPayData`), and the request plumbing hidden from non-auditors.
 - `EntityHistoryAccess` decides who may open a record history: one owner resolver per entity type (the Prisma model name) finds the owning employee, its workflow processes or the roles that manage a configuration table, then applies `ScopeService` and `WorkflowAccessService`. A module that adds an entity type adds a resolver there.
 - The export streams through the report writers (`csvStream`, `xlsxStream`) after writing `EXPORT.AUDIT`.
+- The grid rows add `actingAsEmployeeName` and `subjectEmployeeName`, looked up per page (B256). The explorer's pickers are `GET /audit/employee-options` (`PickerService.auditEmployees`, every employee) and `GET /audit/actor-options` (every login), so system admins and auditors can filter without widening `/lookups/employees` (B257).
 
 ## Operations
 
@@ -493,7 +497,7 @@ The fixtures in `test/support/` sign users in and build an authenticated agent f
 
 - `createOrg`, `createPerson` and `createRoleFixtures` (one person per role, manager A → manager B → employees, an unrelated colleague and another company) in `fixtures.ts`. Codes and usernames come from a database sequence, so they never collide between runs.
 - `login(t, person)` returns an `Agent` that sends the session cookie, the CSRF header and its own `x-forwarded-for` IP (so rate limits do not leak between tests).
-- `authz.ts` holds the authorisation-matrix runner; `test/int/authz-matrix.int.test.ts` (Phase 2), `test/int/authz-matrix-workflow.int.test.ts` (Phase 3), `test/int/authz-matrix-leave.int.test.ts` (Phase 4), `test/int/authz-matrix-claims.int.test.ts` (Phase 5), `test/int/authz-matrix-details.int.test.ts` (Phase 6), `test/int/authz-matrix-payroll.int.test.ts` (Phase 7) and `test/int/authz-matrix-performance.int.test.ts` (Phase 8) and `test/int/authz-matrix-admin.int.test.ts` (Phase 9: admin, free text, audit API, MFA disable) list the cases. Add new endpoints to a matrix file for your phase.
+- `authz.ts` holds the authorisation-matrix runner; `test/int/authz-matrix.int.test.ts` (Phase 2), `test/int/authz-matrix-workflow.int.test.ts` (Phase 3), `test/int/authz-matrix-leave.int.test.ts` (Phase 4), `test/int/authz-matrix-claims.int.test.ts` (Phase 5), `test/int/authz-matrix-details.int.test.ts` (Phase 6), `test/int/authz-matrix-payroll.int.test.ts` (Phase 7) and `test/int/authz-matrix-performance.int.test.ts` (Phase 8) and `test/int/authz-matrix-admin.int.test.ts` (Phase 9: admin, free text, audit API, MFA disable) and `test/int/authz-matrix-final-gaps.int.test.ts` (fund memberships, the step user picker, the deactivating deletes, the audit pickers, holiday restore) list the cases. Add new endpoints to a matrix file for your phase.
 - `leave.ts` holds the leave kit: `setup(org)` seeds the leave reference data and holidays (idempotent) and the two-step definitions of the leave workflow types on the fixture company rule; `accrue(employeeIds, asOf?)`, `monday(days)` and `range(from, units)` for future working-day ranges, `upload(agent)` and `submit(agent, body)`.
 - `claims.ts` holds the claims kit: `setup(org)` seeds the claim reference data (idempotent) and the GROUPEDCLAIM and CLAIMS definitions on the fixture company rule; `group()` and `type(groupId, companyRuleId, spec)` create fresh groups and types whose caps sit on the fixture company rule (so they never reach other tests); `setHourlyRate`, `upload`, `create`, `submit` and `approve`.
 - `details.ts` holds the My Details kit: `setup(org)` seeds the workflow types, lookups and banks (idempotent) and two-step definitions of BASICINF, BANKDET, DRIVERSLICENSE, BENEFICIARY and FREETEXTMANEMP on the fixture company rule; `upload(agent)`, `approve(agent, processId)` / `approveAll`, `account(person, number)` for a bank account set up directly, and `submitted(res)`.

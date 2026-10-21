@@ -60,11 +60,13 @@ Auditors and system admins can also call `GET /api/v1/audit/verify?from=&to=` (a
 | ----------------------------------------- | --------------------------------- | --------------------------------------------------------------------------------------------------------- |
 | `GET /audit`                              | AUDITOR, SYSTEM_ADMIN             | the explorer grid, paginated, newest first (`sort=id:asc` for oldest first)                               |
 | `GET /audit/:id`                          | AUDITOR, SYSTEM_ADMIN             | one row with `before`, `after`, `changes`, `metadata` and the hashes, for the side-by-side diff           |
+| `GET /audit/employee-options`             | AUDITOR, SYSTEM_ADMIN             | the subject filter picker: every employee (all companies and statuses, deleted ones too), paginated       |
+| `GET /audit/actor-options`                | AUDITOR, SYSTEM_ADMIN             | the actor filter picker: every login (the system user too), for `actorUserId`, paginated                  |
 | `GET /audit/entity/:entityType/:entityId` | anyone allowed to see that entity | the record history tab: the entity's rows, the rows of its workflow processes and their `WorkflowAction`s |
 | `GET /audit/verify?from=&to=`             | AUDITOR, SYSTEM_ADMIN             | chain verification (above)                                                                                |
 | `POST /audit/export {filters, format}`    | AUDITOR, SYSTEM_ADMIN             | CSV or Excel, streamed oldest first, at most 100,000 rows; audited `EXPORT.AUDIT` with the filters first  |
 
-**Filters** (all optional, combined with AND): `from` and `to` (dates or timestamps), `actorUserId`, `actorUsername` (contains), `subjectEmployeeId`, `categories` and `outcomes` (comma-separated), `action` (prefix, for example `LEAVE.`), `entityType` and `entityId`, and `q`, free text searched in `metadata` and `reason` (contains, case-insensitive; `%` and `_` match literally). Unknown query parameters are a 422.
+**Filters** (all optional, combined with AND): `from` and `to` (dates or timestamps), `actorUserId`, `actorUsername` (contains), `subjectEmployeeId`, `categories` and `outcomes` (comma-separated), `action` (prefix, for example `LEAVE.`), `entityType` and `entityId`, and `q`, free text searched in `metadata` and `reason` (contains, case-insensitive; `%` and `_` match literally). Unknown query parameters are a 422. Each grid row also carries `actingAsEmployeeName` and `subjectEmployeeName`, looked up from `Employee` when the page is read; the stored row keeps only the ids.
 
 **What a viewer sees.** Values were redacted when the row was written (above), so reading never exposes a secret. On top of that:
 
@@ -102,6 +104,14 @@ Auditors and system admins open every history. For anyone else a missing entity 
 | Free text      | `FREE_TEXT.SUBMITTED/APPROVED/DECLINED/SENT_BACK/RESUBMITTED/WITHDRAWN/CANCELLED`, `FREE_TEXT_TYPE.CREATED/UPDATED/ACTIVATED/DEACTIVATED/SEEDED`                                                                                                                                                                                  |
 | Settings       | `SECURITY.SETTING_CHANGED` (unchanged; a stale `revision` is a 409 and writes nothing)                                                                                                                                                                                                                                            |
 | Exports        | `EXPORT.AUDIT`                                                                                                                                                                                                                                                                                                                    |
+
+## Action names added with the final API gaps
+
+| Area           | Actions                                                                                                                           |
+| -------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| Funds          | `FUND_MEMBERSHIP.ENDED` (HR ends a membership; the row is kept), `FUND_MEMBERSHIP.REOPENED` (enrolling the employee again)        |
+| Reference data | `LOOKUP.DEACTIVATED` (`DELETE /admin/lookups/:table/:id`), `TRANSACTION_CODE.DEACTIVATED` (`DELETE /admin/transaction-codes/:id`) |
+| Holidays       | `HOLIDAY.RESTORED` is also written by `POST /admin/public-holidays/:id/restore`                                                   |
 
 ## Retention
 

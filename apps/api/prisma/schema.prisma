@@ -679,6 +679,8 @@ model FundMembership {
   fundId        Int
   memberNumber  String?
   startDate     DateTime?      @db.Date
+  /// Last day of the membership (HR ends it); null while open. Ended memberships are kept.
+  endDate       DateTime?      @db.Date
   version       Int            @default(1)
   employee      Employee       @relation(fields: [employeeId], references: [id])
   fund          RetirementFund @relation(fields: [fundId], references: [id])

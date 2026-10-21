@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Param, Post, Put, Query } from '@nestjs/common';
+import { Body, Controller, Delete, Get, HttpCode, Param, Post, Put, Query } from '@nestjs/common';
 import { ApiCreatedResponse, ApiOkResponse, ApiTags } from '@nestjs/swagger';
 import {
   AdminBankAccountsResponseSchema,
@@ -6,7 +6,10 @@ import {
   AdminBankBranchSchema,
   AdminBankSchema,
   AdminBanksResponseSchema,
+  AdminFundMemberSchema,
   AdminFundMembershipSchema,
+  AdminFundMembershipsQuerySchema,
+  AdminFundMembershipsResponseSchema,
   AdminLookupResponseSchema,
   AdminLookupValueSchema,
   AdminPersonalDetailsUpdateResponseSchema,
@@ -23,6 +26,8 @@ import {
   CreateLookupValueRequestSchema,
   CreateRetirementFundRequestSchema,
   CreateTransactionCodeRequestSchema,
+  EndFundMembershipRequestSchema,
+  FundMembershipParamSchema,
   IdParamSchema,
   LookupTableParamSchema,
   LookupValueParamSchema,
@@ -69,6 +74,11 @@ class CreateRetirementFundRequestDto extends createZodDto(CreateRetirementFundRe
 class UpdateRetirementFundRequestDto extends createZodDto(UpdateRetirementFundRequestSchema) {}
 class CreateFundMembershipRequestDto extends createZodDto(CreateFundMembershipRequestSchema) {}
 class AdminFundMembershipDto extends createZodDto(AdminFundMembershipSchema) {}
+class AdminFundMemberDto extends createZodDto(AdminFundMemberSchema) {}
+class AdminFundMembershipsQueryDto extends createZodDto(AdminFundMembershipsQuerySchema) {}
+class AdminFundMembershipsResponseDto extends createZodDto(AdminFundMembershipsResponseSchema) {}
+class FundMembershipParamDto extends createZodDto(FundMembershipParamSchema) {}
+class EndFundMembershipRequestDto extends createZodDto(EndFundMembershipRequestSchema) {}
 class LookupTableParamDto extends createZodDto(LookupTableParamSchema) {}
 class LookupValueParamDto extends createZodDto(LookupValueParamSchema) {}
 class AdminLookupResponseDto extends createZodDto(AdminLookupResponseSchema) {}
@@ -273,6 +283,31 @@ export class DetailsAdminController {
     return this.funds.addMembership(ctx, params.id, body);
   }
 
+  /** The fund's members in the caller's companies (paginated; ended ones with `includeEnded`). */
+  @Get('retirement-funds/:id/memberships')
+  @Roles('HR_ADMIN')
+  @ApiOkResponse({ type: AdminFundMembershipsResponseDto })
+  memberships(
+    @Ctx() ctx: SecurityContext,
+    @Param() params: IdParamDto,
+    @Query() query: AdminFundMembershipsQueryDto,
+  ): Promise<AdminFundMembershipsResponseDto> {
+    return this.funds.listMemberships(ctx, params.id, query);
+  }
+
+  /** Ends a membership on `endDate` (default today); the row is kept and audited. */
+  @Post('retirement-funds/:id/memberships/:membershipId/end')
+  @Roles('HR_ADMIN')
+  @HttpCode(200)
+  @ApiOkResponse({ type: AdminFundMemberDto })
+  endMembership(
+    @Ctx() ctx: SecurityContext,
+    @Param() params: FundMembershipParamDto,
+    @Body() body: EndFundMembershipRequestDto,
+  ): Promise<AdminFundMemberDto> {
+    return this.funds.endMembership(ctx, params.id, params.membershipId, body);
+  }
+
   // ───────────── Lookup lists ─────────────
 
   @Get('lookups/:table')
@@ -304,6 +339,18 @@ export class DetailsAdminController {
     return this.lookups.update(ctx, params.table, params.id, body);
   }
 
+  /** Deactivates the value (no hard delete): it can no longer be chosen; records keep it. */
+  @Delete('lookups/:table/:id')
+  @Roles('HR_ADMIN')
+  @ApiOkResponse({ type: AdminLookupValueDto })
+  deactivateLookup(
+    @Ctx() ctx: SecurityContext,
+    @Param() params: LookupValueParamDto,
+    @Body() body: VersionDto,
+  ): Promise<AdminLookupValueDto> {
+    return this.lookups.deactivate(ctx, params.table, params.id, body.version);
+  }
+
   // ───────────── Transaction codes (employee inputs) ─────────────
 
   @Get('transaction-codes')
@@ -332,5 +379,17 @@ export class DetailsAdminController {
     @Body() body: UpdateTransactionCodeRequestDto,
   ): Promise<AdminTransactionCodeDto> {
     return this.transactions.updateCode(ctx, params.id, body);
+  }
+
+  /** Deactivates the code (no hard delete): employees can no longer submit inputs for it. */
+  @Delete('transaction-codes/:id')
+  @Roles('HR_ADMIN')
+  @ApiOkResponse({ type: AdminTransactionCodeDto })
+  deactivateTransactionCode(
+    @Ctx() ctx: SecurityContext,
+    @Param() params: IdParamDto,
+    @Body() body: VersionDto,
+  ): Promise<AdminTransactionCodeDto> {
+    return this.transactions.deactivateCode(ctx, params.id, body.version);
   }
 }

@@ -1,6 +1,8 @@
 import { Body, Controller, Get, HttpCode, Param, Post, Query, Res } from '@nestjs/common';
 import { ApiOkResponse, ApiProduces, ApiTags } from '@nestjs/swagger';
 import {
+  AuditActorOptionsQuerySchema,
+  AuditActorOptionsResponseSchema,
   AuditEntityParamSchema,
   AuditExportRequestSchema,
   AuditIdParamSchema,
@@ -9,6 +11,8 @@ import {
   AuditRowDetailSchema,
   AuditVerifyQuerySchema,
   AuditVerifyResponseSchema,
+  EmployeePickerQuerySchema,
+  EmployeePickerResponseSchema,
   EntityHistoryResponseSchema,
 } from '@peoplehub/shared';
 import type { FastifyReply } from 'fastify';
@@ -16,6 +20,7 @@ import { createZodDto } from 'nestjs-zod';
 import type { SecurityContext } from '../../common/context/security-context';
 import { Ctx } from '../../common/http/request';
 import { Roles } from '../auth/decorators';
+import { PickerService } from '../lookups/picker.service';
 import { AuditApiService } from './audit-api.service';
 
 class AuditListQueryDto extends createZodDto(AuditListQuerySchema) {}
@@ -27,6 +32,10 @@ class EntityHistoryResponseDto extends createZodDto(EntityHistoryResponseSchema)
 class AuditVerifyQueryDto extends createZodDto(AuditVerifyQuerySchema) {}
 class AuditVerifyResponseDto extends createZodDto(AuditVerifyResponseSchema) {}
 class AuditExportRequestDto extends createZodDto(AuditExportRequestSchema) {}
+class AuditActorOptionsQueryDto extends createZodDto(AuditActorOptionsQuerySchema) {}
+class AuditActorOptionsResponseDto extends createZodDto(AuditActorOptionsResponseSchema) {}
+class EmployeePickerQueryDto extends createZodDto(EmployeePickerQuerySchema) {}
+class EmployeePickerResponseDto extends createZodDto(EmployeePickerResponseSchema) {}
 
 /**
  * Section 12.11: the audit explorer, verification and export (AUDITOR and SYSTEM_ADMIN), and the
@@ -35,7 +44,10 @@ class AuditExportRequestDto extends createZodDto(AuditExportRequestSchema) {}
 @ApiTags('audit')
 @Controller('audit')
 export class AuditApiController {
-  constructor(private readonly audit: AuditApiService) {}
+  constructor(
+    private readonly audit: AuditApiService,
+    private readonly pickers: PickerService,
+  ) {}
 
   @Get()
   @Roles('AUDITOR', 'SYSTEM_ADMIN')
@@ -49,6 +61,22 @@ export class AuditApiController {
   @ApiOkResponse({ type: AuditVerifyResponseDto })
   verify(@Query() query: AuditVerifyQueryDto): Promise<AuditVerifyResponseDto> {
     return this.audit.verify(query);
+  }
+
+  /** The subject filter's picker: every employee (all companies and statuses, deleted ones too). */
+  @Get('employee-options')
+  @Roles('AUDITOR', 'SYSTEM_ADMIN')
+  @ApiOkResponse({ type: EmployeePickerResponseDto })
+  employeeOptions(@Query() query: EmployeePickerQueryDto): Promise<EmployeePickerResponseDto> {
+    return this.pickers.auditEmployees(query);
+  }
+
+  /** The actor filter's picker: every login, the system user included. */
+  @Get('actor-options')
+  @Roles('AUDITOR', 'SYSTEM_ADMIN')
+  @ApiOkResponse({ type: AuditActorOptionsResponseDto })
+  actorOptions(@Query() query: AuditActorOptionsQueryDto): Promise<AuditActorOptionsResponseDto> {
+    return this.audit.actorOptions(query);
   }
 
   @Get('entity/:entityType/:entityId')

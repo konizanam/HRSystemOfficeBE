@@ -129,6 +129,8 @@ describe('inbox API (sections 5.10 and 12.7)', () => {
       parkedUntil: null,
       canAct: true,
       viewLabel: 'View fake request',
+      subjectEntity: 'FakeSubject',
+      subjectEntityId: row.subjectEntityId,
     });
     expect(res.body).toMatchObject({ page: 1, pageSize: 100 });
     expect(res.body.items.every((c: { workflowType: string }) => c.workflowType === 'CLAIMS')).toBe(true);

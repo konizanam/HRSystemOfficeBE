@@ -221,6 +221,18 @@ export class HolidayAdminController {
     return this.holidays.deleteHoliday(ctx, params.id, body.version);
   }
 
+  /** Brings a deleted holiday back (audited HOLIDAY.RESTORED). */
+  @Post('public-holidays/:id/restore')
+  @HttpCode(200)
+  @ApiOkResponse({ type: AdminPublicHolidayDto })
+  restore(
+    @Ctx() ctx: SecurityContext,
+    @Param() params: IdParamDto,
+    @Body() body: VersionDto,
+  ): Promise<AdminPublicHolidayDto> {
+    return this.holidays.restoreHoliday(ctx, params.id, body.version);
+  }
+
   @Get('holiday-rules')
   @ApiOkResponse({ type: AdminHolidayRulesResponseDto })
   listRules(@Query() query: HolidayRulesQueryDto): Promise<AdminHolidayRulesResponseDto> {

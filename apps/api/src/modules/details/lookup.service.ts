@@ -158,6 +158,23 @@ export class LookupService {
     return toAdminDto(row);
   }
 
+  /** DELETE /admin/lookups/:table/:id: deactivates the value (no hard deletes). */
+  async deactivate(
+    ctx: SecurityContext,
+    table: LookupTable,
+    id: number,
+    version: number,
+  ): Promise<AdminLookupValue> {
+    const row = await this.updateParameterRow(
+      ctx,
+      LOOKUP_PARAMETER_TABLES[table],
+      id,
+      { version, isActive: false },
+      { action: 'LOOKUP.DEACTIVATED', metadata: { table }, listLabel: `The ${table} list` },
+    );
+    return toAdminDto(row);
+  }
+
   // ───────────── Generic parameter rows (also used by the performance parameter tables) ─────────────
 
   /** Creates an active row (409 on a duplicate code), sorted last unless a sort order is given. */

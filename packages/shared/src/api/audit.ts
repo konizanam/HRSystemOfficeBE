@@ -5,7 +5,7 @@ import {
   ProcessStatusSchema,
   WorkflowActionTypeSchema,
 } from '../enums';
-import { BusinessDateSchema, pageOf, TimestampSchema } from './common';
+import { BusinessDateSchema, pageOf, SearchTextSchema, TimestampSchema } from './common';
 
 // Contracts for the audit API (sections 9.7 and 12.11): the explorer (`GET /audit`, AUDITOR and
 // SYSTEM_ADMIN), one row with its before/after/changes, the record history of an entity (any user
@@ -80,8 +80,49 @@ export const AuditRowSchema = z.object({
 });
 export type AuditRow = z.infer<typeof AuditRowSchema>;
 
-export const AuditListResponseSchema = pageOf(AuditRowSchema);
+/**
+ * A row of the explorer grid (`GET /audit`): the row plus the display names of the acting-as and
+ * subject employees, looked up when the page is read (the audit row itself stores only the ids).
+ * Null when the id is null or no longer resolves.
+ */
+export const AuditListRowSchema = AuditRowSchema.extend({
+  /** "{First} {Last}" of `actingAsEmployeeId`. */
+  actingAsEmployeeName: z.string().nullable(),
+  /** "{First} {Last}" of `subjectEmployeeId`. */
+  subjectEmployeeName: z.string().nullable(),
+});
+export type AuditListRow = z.infer<typeof AuditListRowSchema>;
+
+export const AuditListResponseSchema = pageOf(AuditListRowSchema);
 export type AuditListResponse = z.infer<typeof AuditListResponseSchema>;
+
+/**
+ * The explorer's pickers (AUDITOR and SYSTEM_ADMIN): `GET /audit/employee-options` lists every
+ * employee for the subject filter (all companies and statuses, deleted ones included), in the
+ * `/lookups/employees` row format; `GET /audit/actor-options` lists every login (the system user
+ * included) for the actor filter (`actorUserId`). Both search on the server and are paginated.
+ */
+export const AuditActorOptionsQuerySchema = z.object({
+  /** Username, first name, last name or employee code contains (case-insensitive). */
+  search: SearchTextSchema,
+  page: z.coerce.number().int().min(1).default(1),
+  pageSize: z.coerce.number().int().min(1).max(100).default(25),
+});
+export type AuditActorOptionsQuery = z.infer<typeof AuditActorOptionsQuerySchema>;
+
+export const AuditActorOptionSchema = z.object({
+  userId: z.string(),
+  username: z.string(),
+  /** "{First} {Last}" of the login's employee, or the username for a login without one. */
+  name: z.string(),
+  employeeId: z.number().int().nullable(),
+  employeeCode: z.string().nullable(),
+  isActive: z.boolean(),
+});
+export type AuditActorOption = z.infer<typeof AuditActorOptionSchema>;
+
+export const AuditActorOptionsResponseSchema = pageOf(AuditActorOptionSchema);
+export type AuditActorOptionsResponse = z.infer<typeof AuditActorOptionsResponseSchema>;
 
 /** The full row for the side-by-side diff (values were redacted when the row was written). */
 export const AuditRowDetailSchema = AuditRowSchema.extend({

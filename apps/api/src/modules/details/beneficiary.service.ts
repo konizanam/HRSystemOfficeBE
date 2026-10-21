@@ -1,7 +1,10 @@
 import { Injectable } from '@nestjs/common';
-import type { Beneficiary, ChangeRequest, FundMembership, RetirementFund } from '@prisma/client';
+import type { Beneficiary, ChangeRequest, FundMembership, Prisma, RetirementFund } from '@prisma/client';
 import {
+  type AdminFundMember,
   type AdminFundMembership,
+  type AdminFundMembershipsQuery,
+  type AdminFundMembershipsResponse,
   type AdminRetirementFund,
   type AdminRetirementFundsResponse,
   beneficiaryPercentageIssues,
@@ -12,12 +15,14 @@ import {
   type CreateRetirementFundRequest,
   dateFromBusiness,
   dec,
+  type EndFundMembershipRequest,
   type FundMembership as FundMembershipDto,
   type FundsResponse,
   FUNDS_EMPTY_TEXT,
   maskLast4,
   type PendingChange,
   stableJson,
+  todayBusinessDate,
   type UpdateBeneficiariesRequest,
   type UpdateRetirementFundRequest,
 } from '@peoplehub/shared';
@@ -49,6 +54,46 @@ interface ProposedBeneficiary {
 
 type MembershipRow = FundMembership & { fund: RetirementFund; beneficiaries: Beneficiary[] };
 
+/** Memberships the employee still holds on a day: open, or ending that day or later. */
+function openOn(day: string): Prisma.FundMembershipWhereInput {
+  return { OR: [{ endDate: null }, { endDate: { gte: dateFromBusiness(day) } }] };
+}
+
+/** True once the membership's last day is before `day`. */
+function hasEnded(row: Pick<FundMembership, 'endDate'>, day: string): boolean {
+  return row.endDate !== null && businessFromDate(row.endDate) < day;
+}
+
+function adminMembershipDto(row: FundMembership): AdminFundMembership {
+  return {
+    membershipId: row.id,
+    fundId: row.fundId,
+    employeeId: row.employeeId,
+    memberNumber: row.memberNumber,
+    startDate: row.startDate ? businessFromDate(row.startDate) : null,
+    endDate: row.endDate ? businessFromDate(row.endDate) : null,
+    version: row.version,
+  };
+}
+
+const MEMBER_INCLUDE = {
+  employee: { select: { employeeCode: true, firstName: true, lastName: true, status: true } },
+  _count: { select: { beneficiaries: { where: { deletedAt: null } } } },
+} satisfies Prisma.FundMembershipInclude;
+
+type MemberRow = Prisma.FundMembershipGetPayload<{ include: typeof MEMBER_INCLUDE }>;
+
+function memberDto(row: MemberRow, today: string): AdminFundMember {
+  return {
+    ...adminMembershipDto(row),
+    employeeCode: row.employee.employeeCode,
+    employeeName: `${row.employee.firstName} ${row.employee.lastName}`,
+    employeeStatus: row.employee.status,
+    isActive: !hasEnded(row, today),
+    beneficiaryCount: row._count.beneficiaries,
+  };
+}
+
 function proposedList(value: unknown): ProposedBeneficiary[] {
   const list = (value as { beneficiaries?: unknown } | null)?.beneficiaries;
   return Array.isArray(list) ? (list as ProposedBeneficiary[]) : [];
@@ -78,7 +123,7 @@ export class BeneficiaryService implements ChangeApplier {
     const prisma = this.db.prisma;
     const [rows, pending] = await Promise.all([
       prisma.fundMembership.findMany({
-        where: { employeeId: me.id, fund: { isActive: true } },
+        where: { employeeId: me.id, fund: { isActive: true }, ...openOn(todayBusinessDate()) },
         include: { fund: true, beneficiaries: { where: { deletedAt: null }, orderBy: { id: 'asc' } } },
         orderBy: { fund: { name: 'asc' } },
       }),
@@ -128,7 +173,12 @@ export class BeneficiaryService implements ChangeApplier {
         where: { id: membershipId },
         include: { fund: true, beneficiaries: { where: { deletedAt: null }, orderBy: { id: 'asc' } } },
       });
-      if (!membership || membership.employeeId !== me.id || !membership.fund.isActive) {
+      if (
+        !membership ||
+        membership.employeeId !== me.id ||
+        !membership.fund.isActive ||
+        hasEnded(membership, todayBusinessDate())
+      ) {
         throw new NotFoundError('Fund membership');
       }
       assertVersion(membership, body.version);
@@ -230,6 +280,7 @@ export class BeneficiaryService implements ChangeApplier {
       include: { fund: { select: { isActive: true } } },
     });
     if (!membership || !membership.fund.isActive) return 'The fund membership no longer exists';
+    if (hasEnded(membership, todayBusinessDate())) return 'The fund membership has ended';
     if (membership.version !== cr.baseVersion)
       return 'The beneficiaries changed after this request was submitted';
     return null;
@@ -386,7 +437,32 @@ export class BeneficiaryService implements ChangeApplier {
       const existing = await tx.fundMembership.findUnique({
         where: { employeeId_fundId: { employeeId: input.employeeId, fundId } },
       });
-      if (existing) throw new ConflictError('The employee is already a member of this fund');
+      if (existing && existing.endDate === null) {
+        throw new ConflictError('The employee is already a member of this fund');
+      }
+      if (existing) {
+        // An ended membership is reopened (its unique key is taken); its beneficiaries are kept.
+        await this.db.lockRow(tx, 'FundMembership', existing.id);
+        const after = await tx.fundMembership.update({
+          where: { id: existing.id },
+          data: {
+            endDate: null,
+            memberNumber: input.memberNumber ?? existing.memberNumber,
+            startDate: input.startDate ? dateFromBusiness(input.startDate) : existing.startDate,
+            version: { increment: 1 },
+          },
+        });
+        this.audit.record(tx, ctx, {
+          category: 'DATA_CHANGE',
+          action: 'FUND_MEMBERSHIP.REOPENED',
+          entityType: 'FundMembership',
+          entityId: after.id,
+          subjectEmployeeId: after.employeeId,
+          before: existing,
+          after,
+        });
+        return adminMembershipDto(after);
+      }
       const row = await tx.fundMembership.create({
         data: {
           employeeId: input.employeeId,
@@ -403,14 +479,93 @@ export class BeneficiaryService implements ChangeApplier {
         subjectEmployeeId: row.employeeId,
         after: row,
       });
-      return {
-        membershipId: row.id,
-        fundId: row.fundId,
-        employeeId: row.employeeId,
-        memberNumber: row.memberNumber,
-        startDate: row.startDate ? businessFromDate(row.startDate) : null,
-        version: row.version,
-      };
+      return adminMembershipDto(row);
+    });
+  }
+
+  /**
+   * GET /admin/retirement-funds/:id/memberships: the fund's members in the caller's companies,
+   * by surname; ended memberships only with `includeEnded`.
+   */
+  async listMemberships(
+    ctx: SecurityContext,
+    fundId: number,
+    query: AdminFundMembershipsQuery,
+  ): Promise<AdminFundMembershipsResponse> {
+    const prisma = this.db.prisma;
+    const fund = await prisma.retirementFund.findUnique({ where: { id: fundId }, select: { id: true } });
+    if (!fund) throw new NotFoundError('Retirement fund');
+    const today = todayBusinessDate();
+    const and: Prisma.FundMembershipWhereInput[] = [
+      { fundId },
+      { employee: { deletedAt: null, ...(ctx.isSystem ? {} : { companyId: { in: ctx.companyIds } }) } },
+    ];
+    if (!query.includeEnded) and.push(openOn(today));
+    if (query.search) {
+      const contains = { contains: query.search, mode: 'insensitive' as const };
+      and.push({
+        OR: [
+          { memberNumber: contains },
+          { employee: { firstName: contains } },
+          { employee: { lastName: contains } },
+          { employee: { employeeCode: contains } },
+        ],
+      });
+    }
+    const where: Prisma.FundMembershipWhereInput = { AND: and };
+    const [rows, total] = await Promise.all([
+      prisma.fundMembership.findMany({
+        where,
+        include: MEMBER_INCLUDE,
+        orderBy: [{ employee: { lastName: 'asc' } }, { employee: { firstName: 'asc' } }, { id: 'asc' }],
+        skip: (query.page - 1) * query.pageSize,
+        take: query.pageSize,
+      }),
+      prisma.fundMembership.count({ where }),
+    ]);
+    return { items: rows.map((r) => memberDto(r, today)), total, page: query.page, pageSize: query.pageSize };
+  }
+
+  /**
+   * POST /admin/retirement-funds/:id/memberships/:membershipId/end: sets the membership's last
+   * day (default today, never before its start). The row and its beneficiaries are kept.
+   */
+  async endMembership(
+    ctx: SecurityContext,
+    fundId: number,
+    membershipId: number,
+    input: EndFundMembershipRequest,
+  ): Promise<AdminFundMember> {
+    return this.db.tx(ctx, async (tx) => {
+      await this.db.lockRow(tx, 'FundMembership', membershipId);
+      const before = await tx.fundMembership.findUnique({ where: { id: membershipId } });
+      if (!before || before.fundId !== fundId) throw new NotFoundError('Fund membership');
+      await this.scope.assertCanAccessEmployee(ctx, before.employeeId, 'HR_WRITE', tx);
+      assertVersion(before, input.version);
+      if (before.endDate !== null) {
+        throw new ConflictError(`This membership already ended on ${businessFromDate(before.endDate)}`);
+      }
+      const today = todayBusinessDate();
+      const endDate = input.endDate ?? today;
+      if (before.startDate && endDate < businessFromDate(before.startDate)) {
+        throw ValidationError.field('endDate', 'The end date cannot be before the start date');
+      }
+      const updated = await tx.fundMembership.update({
+        where: { id: membershipId },
+        data: { endDate: dateFromBusiness(endDate), version: { increment: 1 } },
+        include: MEMBER_INCLUDE,
+      });
+      const { employee: _employee, _count: _count, ...after } = updated;
+      this.audit.record(tx, ctx, {
+        category: 'DATA_CHANGE',
+        action: 'FUND_MEMBERSHIP.ENDED',
+        entityType: 'FundMembership',
+        entityId: membershipId,
+        subjectEmployeeId: before.employeeId,
+        before,
+        after,
+      });
+      return memberDto(updated, today);
     });
   }
 }

@@ -325,6 +325,8 @@ export class InboxService {
         parkedUntil: mine?.status === 'PARKED' && mine.parkedUntil ? mine.parkedUntil.toISOString() : null,
         canAct: row.status === 'IN_PROGRESS' && Boolean(due),
         viewLabel: description.viewLabel,
+        subjectEntity: row.subjectEntity,
+        subjectEntityId: row.subjectEntityId,
       },
     };
   }
@@ -416,6 +418,8 @@ export class InboxService {
 
     return {
       card,
+      subjectEntity: p.subjectEntity,
+      subjectEntityId: p.subjectEntityId,
       subject: toSubjectDetail(description),
       submittedBy: persons.get(p.submittedByUserId) ?? unknownPerson(p.submittedByUserId),
       submittedOnBehalf: p.submittedOnBehalf,

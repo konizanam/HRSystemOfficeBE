@@ -83,6 +83,20 @@ export function availableInCompany(companyId: number): Prisma.UserWhereInput {
   };
 }
 
+/** Username, name or employee code contains the search text (case-insensitive). */
+function searchWhere(search: string | undefined): Prisma.UserWhereInput {
+  if (!search) return {};
+  const contains = { contains: search, mode: 'insensitive' as const };
+  return {
+    OR: [
+      { username: contains },
+      { employee: { firstName: contains } },
+      { employee: { lastName: contains } },
+      { employee: { employeeCode: contains } },
+    ],
+  };
+}
+
 /** Loads and formats people involved in workflows. */
 @Injectable()
 export class WorkflowPeopleService {
@@ -141,19 +155,30 @@ export class WorkflowPeopleService {
   async userOptions(ctx: SecurityContext, search: string | undefined): Promise<UserOptionsResponse> {
     const companies = await this.pickerCompanies(ctx);
     if (companies.length === 0) return { items: [], truncated: false };
-    const where: Prisma.UserWhereInput = {
+    return this.options({
       isActive: true,
       id: { notIn: [SYSTEM_USER_ID, ctx.userId] },
       employee: { companyId: { in: companies }, status: 'ACTIVE', deletedAt: null },
-    };
-    if (search) {
-      where.OR = [
-        { username: { contains: search, mode: 'insensitive' } },
-        { employee: { firstName: { contains: search, mode: 'insensitive' } } },
-        { employee: { lastName: { contains: search, mode: 'insensitive' } } },
-        { employee: { employeeCode: { contains: search, mode: 'insensitive' } } },
-      ];
+      ...searchWhere(search),
+    });
+  }
+
+  /**
+   * `GET /admin/workflow-definitions/user-options` (HR_ADMIN): who a SPECIFIC_USER step may name.
+   * Active logins whose employee is ACTIVE in one of the caller's companies, plus active logins
+   * without an employee record; never the system user. The caller may pick themself.
+   */
+  async stepUserOptions(ctx: SecurityContext, search: string | undefined): Promise<UserOptionsResponse> {
+    const people: Prisma.UserWhereInput[] = [{ employeeId: null }];
+    if (ctx.companyIds.length > 0) {
+      people.push({ employee: { companyId: { in: ctx.companyIds }, status: 'ACTIVE', deletedAt: null } });
     }
+    return this.options({
+      AND: [{ isActive: true, id: { not: SYSTEM_USER_ID } }, { OR: people }, searchWhere(search)],
+    });
+  }
+
+  private async options(where: Prisma.UserWhereInput): Promise<UserOptionsResponse> {
     const rows = await this.db.prisma.user.findMany({
       where,
       select: PERSON_USER_SELECT,

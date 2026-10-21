@@ -15,11 +15,14 @@ import {
   UpdatePayPeriodRequestSchema,
   UpdateWorkflowDefinitionRequestSchema,
   UpdateWorkflowStepsRequestSchema,
+  UserOptionsQuerySchema,
+  UserOptionsResponseSchema,
 } from '@peoplehub/shared';
 import { createZodDto } from 'nestjs-zod';
 import type { SecurityContext } from '../../common/context/security-context';
 import { Ctx } from '../../common/http/request';
 import { Roles } from '../auth/decorators';
+import { WorkflowPeopleService } from '../workflow/people.service';
 import { PayPeriodAdminService } from './pay-period-admin.service';
 import { WorkflowDefinitionAdminService } from './workflow-definition-admin.service';
 
@@ -37,6 +40,8 @@ class AdminPayPeriodsResponseDto extends createZodDto(AdminPayPeriodsResponseSch
 class CreatePayPeriodDto extends createZodDto(CreatePayPeriodRequestSchema) {}
 class UpdatePayPeriodDto extends createZodDto(UpdatePayPeriodRequestSchema) {}
 class ClosePayPeriodResponseDto extends createZodDto(ClosePayPeriodResponseSchema) {}
+class UserOptionsQueryDto extends createZodDto(UserOptionsQuerySchema) {}
+class UserOptionsResponseDto extends createZodDto(UserOptionsResponseSchema) {}
 
 /**
  * Section 12.10 (HR_ADMIN): workflow definitions and their steps. A PUT creates a new version
@@ -46,7 +51,10 @@ class ClosePayPeriodResponseDto extends createZodDto(ClosePayPeriodResponseSchem
 @Controller('admin/workflow-definitions')
 @Roles('HR_ADMIN')
 export class WorkflowDefinitionAdminController {
-  constructor(private readonly definitions: WorkflowDefinitionAdminService) {}
+  constructor(
+    private readonly definitions: WorkflowDefinitionAdminService,
+    private readonly people: WorkflowPeopleService,
+  ) {}
 
   @Get()
   @ApiOkResponse({ type: AdminWorkflowDefinitionsResponseDto })
@@ -55,6 +63,19 @@ export class WorkflowDefinitionAdminController {
     @Query() query: AdminWorkflowDefinitionsQueryDto,
   ): Promise<AdminWorkflowDefinitionsResponseDto> {
     return this.definitions.list(ctx, query);
+  }
+
+  /**
+   * Who a SPECIFIC_USER step may name: active users of the caller's companies plus active users
+   * without an employee record (the system user never). Declared before `:id`.
+   */
+  @Get('user-options')
+  @ApiOkResponse({ type: UserOptionsResponseDto })
+  userOptions(
+    @Ctx() ctx: SecurityContext,
+    @Query() query: UserOptionsQueryDto,
+  ): Promise<UserOptionsResponseDto> {
+    return this.people.stepUserOptions(ctx, query.search);
   }
 
   @Get(':id')

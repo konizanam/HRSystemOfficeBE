@@ -945,6 +945,11 @@ export class ClaimService {
       canEdit: row.canResume,
       approvalHistory: claim.processId !== null ? await this.historyOf(claim.processId) : null,
       processVersion: claim.process?.version ?? null,
+      // The engine's resubmit rule: the applicant (or working as them) or the submitter.
+      canResubmit:
+        claim.process !== null &&
+        claim.process.status === 'RESUBMIT_REQUIRED' &&
+        this.access.isApplicant(ctx, claim.process),
     };
   }
 

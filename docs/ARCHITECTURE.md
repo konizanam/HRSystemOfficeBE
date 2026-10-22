@@ -486,12 +486,12 @@ To add a migration, edit `prisma/schema.prisma` and run `pnpm --filter @peoplehu
 
 ## Testing
 
-| Suite           | Command                                      | Notes                                                                                                                                                            |
-| --------------- | -------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Shared unit     | `pnpm --filter @peoplehub/shared test`       | ≥ 90% line coverage                                                                                                                                              |
-| API unit        | `pnpm --filter @peoplehub/api test`          | `test/unit/**`, pure domain logic, no DB                                                                                                                         |
-| API integration | `pnpm test:int`                              | `test/int/**`, Supertest against `createApp()` on `TEST_DATABASE_URL` (Testcontainers when unset); files run serially; use unique keys, never assume an empty DB |
-| Web e2e         | `pnpm --filter @peoplehub/web e2e` (FE repo) | Playwright, including the radius/shadow visual rule                                                                                                              |
+| Suite           | Command                                      | Notes                                                                                                                                                                             |
+| --------------- | -------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Shared unit     | `pnpm --filter @peoplehub/shared test`       | ≥ 90% line coverage                                                                                                                                                               |
+| API unit        | `pnpm --filter @peoplehub/api test`          | `test/unit/**`, pure domain logic, no DB                                                                                                                                          |
+| API integration | `pnpm test:int`                              | `test/int/**`, Supertest against `createApp()` on `TEST_DB_NAME` / `TEST_DATABASE_URL` (Testcontainers when unset); files run serially; use unique keys, never assume an empty DB |
+| Web e2e         | `pnpm --filter @peoplehub/web e2e` (FE repo) | Playwright, including the radius/shadow visual rule                                                                                                                               |
 
 The fixtures in `test/support/` sign users in and build an authenticated agent for each role:
 

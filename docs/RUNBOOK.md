@@ -17,12 +17,12 @@ Creating a new environment (as a PostgreSQL superuser, once per cluster; the scr
 psql -U postgres -v owner_pw='<owner password>' -v user_pw='<user password>' -v db=peoplehub -f scripts/db-roles.sql
 ```
 
-It creates `app_owner` (LOGIN CREATEDB) and `app_user` (LOGIN), the database owned by `app_owner`, and grants `app_user` CONNECT. Use a separate database (for example `peoplehub_test`) for the integration tests.
+It creates `app_owner` (LOGIN CREATEDB) and `app_user` (LOGIN), the database owned by `app_owner`, and grants `app_user` CONNECT. Integration tests need a separate database (set `TEST_DB_NAME`) or Docker for Testcontainers; they never use the main database.
 
 Then apply the migrations as the owner and seed as the application role:
 
 ```sh
-pnpm db:deploy        # prisma migrate deploy as app_owner (MIGRATION_DATABASE_URL)
+pnpm db:deploy        # prisma migrate deploy as app_owner (DB_OWNER_USER / DB_OWNER_PASSWORD)
 pnpm db:seed          # idempotent demo data as app_user (run it twice: the second run changes nothing)
 pnpm audit:verify     # the chain must be OK
 ```
@@ -41,29 +41,31 @@ Rules: migrations are applied with `migrate deploy` in every shared environment;
 
 The API reads the repository-root `.env` (and `apps/api/.env`, which wins); variables already set in the process environment win over both. The schema is `apps/api/src/config/env.ts`; an invalid value stops the API at start-up with the variable named.
 
-| Variable                                                                                                         | Purpose                                                                                                     | Default                           |
-| ---------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- | --------------------------------- |
-| `NODE_ENV`                                                                                                       | `development`, `test` or `production`                                                                       | `development`                     |
-| `PORT`                                                                                                           | HTTP port of the API                                                                                        | `3000`                            |
-| `DATABASE_URL`                                                                                                   | connection string of **app_user**                                                                           | required                          |
-| `MIGRATION_DATABASE_URL`                                                                                         | connection string of **app_owner** (migrations only; not read by the API)                                   | required for migrations           |
-| `TEST_DATABASE_URL`, `TEST_MIGRATION_DATABASE_URL`                                                               | the integration-test database (`peoplehub_test`); without them the tests start a Testcontainers Postgres 16 | unset                             |
-| `WEB_ORIGIN`                                                                                                     | the only CORS origin                                                                                        | `http://localhost:5173`           |
-| `PUBLIC_URL`                                                                                                     | base URL of the web app, used in email links and OIDC redirects                                             | `http://localhost:5173`           |
-| `LOG_LEVEL`                                                                                                      | pino level                                                                                                  | `info`                            |
-| `ENCRYPTION_KEYS`                                                                                                | JSON `{ "k1": "<base64 32 bytes>", … }` (section 10.3)                                                      | required                          |
-| `ENCRYPTION_ACTIVE_KEY`                                                                                          | the key id new values are encrypted with                                                                    | required                          |
-| `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASS`                                                | outgoing mail                                                                                               | `localhost:1025`, insecure        |
-| `MAIL_FROM`                                                                                                      | sender (the `mail.from` setting overrides it)                                                               | `PeopleHub <noreply@example.com>` |
-| `MAIL_TRANSPORT`                                                                                                 | `smtp`, or `memory` (tests, seed)                                                                           | `smtp`                            |
-| `STORAGE_DRIVER`                                                                                                 | `local` or `s3`                                                                                             | `local`                           |
-| `STORAGE_LOCAL_ROOT`                                                                                             | file root for `local`                                                                                       | `./storage`                       |
-| `S3_ENDPOINT`, `S3_REGION`, `S3_BUCKET`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, `S3_FORCE_PATH_STYLE`       | object storage for `s3`                                                                                     | MinIO-friendly                    |
-| `AUDIT_ANCHOR_BUCKET`                                                                                            | write-once (Object Lock) bucket for the daily audit anchors; empty = database only                          | unset                             |
-| `OIDC_ISSUER`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`, `OIDC_REDIRECT_URI`, `OIDC_SCOPES`, `OIDC_AUTO_PROVISION` | OAuth/OIDC sign-in (section 4.3, see 3)                                                                     | off                               |
-| `JOBS_ENABLED`                                                                                                   | start pg-boss workers and cron schedules                                                                    | `true`                            |
-| `VIRUS_SCANNER`, `CLAMAV_HOST`, `CLAMAV_PORT`, `CLAMAV_TIMEOUT_MS`                                               | upload scanning (`none` or `clamav`)                                                                        | `none`                            |
-| `COOKIE_SECURE`                                                                                                  | Secure session cookies; set `false` only for plain-http development                                         | `true`                            |
+| Variable                                                                                                         | Purpose                                                                                                                      | Default                           |
+| ---------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- | --------------------------------- |
+| `NODE_ENV`                                                                                                       | `development`, `test` or `production`                                                                                        | `development`                     |
+| `PORT`                                                                                                           | HTTP port of the API                                                                                                         | `3000`                            |
+| `DB_HOST`, `DB_PORT`, `DB_NAME`                                                                                  | database server and the main database (same format as the other Koniza apps)                                                 | `DB_PORT=5432`                    |
+| `DB_USER`, `DB_PASSWORD`                                                                                         | the runtime role **app_user** (API, seed, CLIs)                                                                              | required                          |
+| `DB_OWNER_USER`, `DB_OWNER_PASSWORD`                                                                             | the owner role **app_owner** (migrations only; not used by the API)                                                          | required for migrations           |
+| `DATABASE_URL`, `MIGRATION_DATABASE_URL`                                                                         | optional full connection strings; when set they win over the `DB_*` values (CI, Docker)                                      | built from `DB_*`                 |
+| `TEST_DB_NAME` (or `TEST_DATABASE_URL`/`TEST_MIGRATION_DATABASE_URL`)                                            | a separate integration-test database; never the main one. Unset: the tests start a Testcontainers Postgres 16 (needs Docker) | unset                             |
+| `WEB_ORIGIN`                                                                                                     | the only CORS origin                                                                                                         | `http://localhost:5173`           |
+| `PUBLIC_URL`                                                                                                     | base URL of the web app, used in email links and OIDC redirects                                                              | `http://localhost:5173`           |
+| `LOG_LEVEL`                                                                                                      | pino level                                                                                                                   | `info`                            |
+| `ENCRYPTION_KEYS`                                                                                                | JSON `{ "k1": "<base64 32 bytes>", … }` (section 10.3)                                                                       | required                          |
+| `ENCRYPTION_ACTIVE_KEY`                                                                                          | the key id new values are encrypted with                                                                                     | required                          |
+| `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASS`                                                | outgoing mail                                                                                                                | `localhost:1025`, insecure        |
+| `MAIL_FROM`                                                                                                      | sender (the `mail.from` setting overrides it)                                                                                | `PeopleHub <noreply@example.com>` |
+| `MAIL_TRANSPORT`                                                                                                 | `smtp`, or `memory` (tests, seed)                                                                                            | `smtp`                            |
+| `STORAGE_DRIVER`                                                                                                 | `local` or `s3`                                                                                                              | `local`                           |
+| `STORAGE_LOCAL_ROOT`                                                                                             | file root for `local`                                                                                                        | `./storage`                       |
+| `S3_ENDPOINT`, `S3_REGION`, `S3_BUCKET`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, `S3_FORCE_PATH_STYLE`       | object storage for `s3`                                                                                                      | MinIO-friendly                    |
+| `AUDIT_ANCHOR_BUCKET`                                                                                            | write-once (Object Lock) bucket for the daily audit anchors; empty = database only                                           | unset                             |
+| `OIDC_ISSUER`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`, `OIDC_REDIRECT_URI`, `OIDC_SCOPES`, `OIDC_AUTO_PROVISION` | OAuth/OIDC sign-in (section 4.3, see 3)                                                                                      | off                               |
+| `JOBS_ENABLED`                                                                                                   | start pg-boss workers and cron schedules                                                                                     | `true`                            |
+| `VIRUS_SCANNER`, `CLAMAV_HOST`, `CLAMAV_PORT`, `CLAMAV_TIMEOUT_MS`                                               | upload scanning (`none` or `clamav`)                                                                                         | `none`                            |
+| `COOKIE_SECURE`                                                                                                  | Secure session cookies; set `false` only for plain-http development                                                          | `true`                            |
 
 Never commit `.env` files. Runtime behaviour that HR or a system admin changes (idle timeout, "Working as" depth and restrictions, auto-processing, escalation, birthdays, branding, deactivating logins on termination) lives in `SystemSetting` and is edited through `GET/PUT /api/v1/admin/settings` (send back the `revision` you read; a stale one answers 409).
 
@@ -92,7 +94,7 @@ Two layers, both required in production:
 2. **Nightly logical dump** (portable, easy to inspect), as `app_owner`:
 
    ```sh
-   pg_dump --format=custom --no-owner --file=/backup/dump/peoplehub-$(date +%F).dump "$MIGRATION_DATABASE_URL"
+   pg_dump --format=custom --no-owner --file=/backup/dump/peoplehub-$(date +%F).dump "postgresql://$DB_OWNER_USER@$DB_HOST:$DB_PORT/$DB_NAME"
    ```
 
 Also back up the attachment store (`STORAGE_LOCAL_ROOT`, or enable versioning on the S3 bucket): payslip and tax certificate PDFs are attachments and their `sha256` is checked on every read. Keep `ENCRYPTION_KEYS` in a secret manager, separately from the backups: a backup without its keys cannot be decrypted (by design), and keys without the backup reveal nothing.
@@ -106,7 +108,7 @@ Run it on a scratch server, never over production.
 1. Create the roles (section 1) and an empty database owned by `app_owner`.
 2. Restore: `pg_restore --no-owner --role=app_owner --dbname=<scratch url> /backup/dump/peoplehub-<date>.dump`. For point-in-time recovery restore the base backup, set `restore_command = 'cp /backup/wal/%f %p'` and `recovery_target_time = '<timestamp>'`, create `recovery.signal` and start Postgres.
 3. Re-apply the grants if the restore ran without them (they are part of the migrations): run `pnpm db:deploy` against the scratch database; it reports "No pending migrations" and leaves data alone.
-4. Point a scratch API at it (`DATABASE_URL`, the same `ENCRYPTION_KEYS`, `JOBS_ENABLED=false`, `MAIL_TRANSPORT=memory`).
+4. Point a scratch API at it (`DB_*` settings pointing at the restored database, the same `ENCRYPTION_KEYS`, `JOBS_ENABLED=false`, `MAIL_TRANSPORT=memory`).
 5. Verify:
    - `pnpm audit:verify` reports `Audit chain OK`;
    - compare the last row with the latest anchor (section 6): `SELECT "lastAuditId", "lastHash" FROM "AuditAnchor" ORDER BY day DESC LIMIT 1;` and, when configured, the matching object in `AUDIT_ANCHOR_BUCKET` (`audit-anchors/<day>.json`);

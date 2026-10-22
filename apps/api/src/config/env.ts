@@ -1,10 +1,12 @@
 import { config as loadDotenv } from 'dotenv';
 import { resolve } from 'node:path';
 import { z } from 'zod';
+import { applyDatabaseUrls } from './database-url';
 
 // The repo-root .env is shared by the API and scripts; apps/api/.env (if present) wins.
 loadDotenv({ path: resolve(__dirname, '../../.env'), quiet: true });
 loadDotenv({ path: resolve(__dirname, '../../../../.env'), quiet: true });
+applyDatabaseUrls();
 
 const bool = z
   .union([z.boolean(), z.string()])
@@ -13,7 +15,7 @@ const bool = z
 const EnvSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   PORT: z.coerce.number().int().default(3000),
-  DATABASE_URL: z.string().min(1),
+  DATABASE_URL: z.string({ required_error: 'set DB_HOST, DB_NAME, DB_USER and DB_PASSWORD' }).min(1),
   WEB_ORIGIN: z.string().default('http://localhost:5173'),
   PUBLIC_URL: z.string().default('http://localhost:5173'),
   LOG_LEVEL: z.string().default('info'),

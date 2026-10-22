@@ -56,7 +56,7 @@ The OpenAPI document at `/api/docs` lists every route with its request and respo
 
 ```bash
 pnpm lint && pnpm typecheck && pnpm test   # unit tests (90% coverage on shared)
-pnpm test:int                              # integration tests against TEST_DATABASE_URL (or Testcontainers)
+pnpm test:int                              # integration tests against TEST_DB_NAME (or Testcontainers)
 pnpm audit:verify                          # recompute the audit hash chain
 ```
 

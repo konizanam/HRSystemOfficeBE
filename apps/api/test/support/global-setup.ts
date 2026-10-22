@@ -2,6 +2,7 @@ import { execSync } from 'node:child_process';
 import { resolve } from 'node:path';
 import { config } from 'dotenv';
 import type { TestProject } from 'vitest/node';
+import { databaseUrlFrom } from '../../src/config/database-url';
 
 config({ path: resolve(__dirname, '../../../../.env'), quiet: true });
 config({ path: resolve(__dirname, '../../.env'), quiet: true });
@@ -17,13 +18,19 @@ function withDb(url: string, db: string): string {
 }
 
 /**
- * Prepares a fully migrated test database. Uses TEST_DATABASE_URL /
- * TEST_MIGRATION_DATABASE_URL when set (local Postgres, CI service); otherwise starts a
- * Testcontainers Postgres 16 and creates the app_owner/app_user roles in it.
+ * Prepares a fully migrated test database, in this order of preference:
+ * 1. TEST_DATABASE_URL / TEST_MIGRATION_DATABASE_URL (CI service);
+ * 2. TEST_DB_NAME on the DB_* server settings from .env (a local test database);
+ * 3. a Testcontainers Postgres 16 with the app_owner/app_user roles created in it.
+ * The main database (DB_NAME) is never used unless TEST_DB_NAME names it explicitly.
  */
 export async function setup(project: TestProject): Promise<void> {
-  let userUrl = process.env.TEST_DATABASE_URL;
-  let ownerUrl = process.env.TEST_MIGRATION_DATABASE_URL;
+  const testDb = process.env.TEST_DB_NAME;
+  let userUrl =
+    process.env.TEST_DATABASE_URL ?? (testDb ? databaseUrlFrom(process.env, 'app', testDb) : undefined);
+  let ownerUrl =
+    process.env.TEST_MIGRATION_DATABASE_URL ??
+    (testDb ? databaseUrlFrom(process.env, 'owner', testDb) : undefined);
 
   if (!userUrl || !ownerUrl) {
     const { PostgreSqlContainer } = await import('@testcontainers/postgresql');
